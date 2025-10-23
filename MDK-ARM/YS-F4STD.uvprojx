@@ -778,17 +778,22 @@
           </Files>
         </Group>
         <Group>
-          <GroupName>Application/Sensors</GroupName>
+          <GroupName>APP</GroupName>
           <Files>
+            <File>
+              <FileName>actuator_task_v3.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\actuator_task_v3.c</FilePath>
+            </File>
+            <File>
+              <FileName>sensor_task_v3.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\sensor_task_v3.c</FilePath>
+            </File>
             <File>
               <FileName>sensor_simulator.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Src\sensor_simulator.c</FilePath>
-            </File>
-            <File>
-              <FileName>sensor_tasks.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Src\sensor_tasks.c</FilePath>
             </File>
           </Files>
         </Group>

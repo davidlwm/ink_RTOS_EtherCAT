@@ -91,9 +91,9 @@ int main(void)
     EtherCAT_SensorBridge_Start();
 
     /* 初始化传感器任务系统 */
-    if (Sensor_Tasks_Init() != pdPASS) {
-        //printf("ERROR: Failed to initialize sensor tasks!\r\n");
-    }
+    // if (Sensor_Tasks_Init() != pdPASS) {
+    //     //printf("ERROR: Failed to initialize sensor tasks!\r\n");
+    // }
 
     /* 打印启动信息 */
     // printf("\r\n=================================\r\n");
@@ -146,9 +146,9 @@ int main(void)
     }
 
     /* 创建传感器相关任务 */
-    if (Sensor_Tasks_Create() != pdPASS) {
-        //printf("ERROR: Failed to create Sensor tasks!\r\n");
-    }
+    // if (Sensor_Tasks_Create() != pdPASS) {
+    //     //printf("ERROR: Failed to create Sensor tasks!\r\n");
+    // }
 
     //printf("All tasks created successfully\r\n");
 

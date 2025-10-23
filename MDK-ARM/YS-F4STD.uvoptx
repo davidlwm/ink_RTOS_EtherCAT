@@ -1233,7 +1233,7 @@
   </Group>
 
   <Group>
-    <GroupName>Application/Sensors</GroupName>
+    <GroupName>APP</GroupName>
     <tvExp>1</tvExp>
     <tvExpOptDlg>0</tvExpOptDlg>
     <cbSel>0</cbSel>
@@ -1245,8 +1245,8 @@
       <tvExp>0</tvExp>
       <tvExpOptDlg>0</tvExpOptDlg>
       <bDave2>0</bDave2>
-      <PathWithFileName>..\Src\sensor_simulator.c</PathWithFileName>
-      <FilenameWithoutPath>sensor_simulator.c</FilenameWithoutPath>
+      <PathWithFileName>..\Src\actuator_task_v3.c</PathWithFileName>
+      <FilenameWithoutPath>actuator_task_v3.c</FilenameWithoutPath>
       <RteFlg>0</RteFlg>
       <bShared>0</bShared>
     </File>
@@ -1257,8 +1257,20 @@
       <tvExp>0</tvExp>
       <tvExpOptDlg>0</tvExpOptDlg>
       <bDave2>0</bDave2>
-      <PathWithFileName>..\Src\sensor_tasks.c</PathWithFileName>
-      <FilenameWithoutPath>sensor_tasks.c</FilenameWithoutPath>
+      <PathWithFileName>..\Src\sensor_task_v3.c</PathWithFileName>
+      <FilenameWithoutPath>sensor_task_v3.c</FilenameWithoutPath>
+      <RteFlg>0</RteFlg>
+      <bShared>0</bShared>
+    </File>
+    <File>
+      <GroupNumber>11</GroupNumber>
+      <FileNumber>73</FileNumber>
+      <FileType>1</FileType>
+      <tvExp>0</tvExp>
+      <tvExpOptDlg>0</tvExpOptDlg>
+      <bDave2>0</bDave2>
+      <PathWithFileName>..\Src\sensor_simulator.c</PathWithFileName>
+      <FilenameWithoutPath>sensor_simulator.c</FilenameWithoutPath>
       <RteFlg>0</RteFlg>
       <bShared>0</bShared>
     </File>
