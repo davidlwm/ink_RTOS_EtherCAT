@@ -71,6 +71,7 @@
 "ys-f4std\actuator_task_v3.o"
 "ys-f4std\sensor_task_v3.o"
 "ys-f4std\sensor_simulator.o"
+"ys-f4std\control_task_v3.o"
 --library_type=microlib --strict --scatter "YS-F4STD\YS-F4STD.sct"
 --summary_stderr --info summarysizes --map --load_addr_map_info --xref --callgraph --symbols
 --info sizes --info totals --info unused --info veneers

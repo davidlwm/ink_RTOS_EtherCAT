@@ -27,7 +27,48 @@ Project File Date:  10/23/2025
 <h2>Output:</h2>
 *** Using Compiler 'V5.06 update 5 (build 528)', folder: 'C:\Keil_v5\ARM\ARMCC\Bin'
 Build target 'YS-F4STD'
-"YS-F4STD\YS-F4STD.axf" - 0 Error(s), 0 Warning(s).
+compiling control_task_v3.c...
+..\Inc\FreeRTOSConfig.h(180): warning:  #47-D: incompatible redefinition of macro "configKERNEL_INTERRUPT_PRIORITY"  (declared at line 64)
+  #define configKERNEL_INTERRUPT_PRIORITY 		( configLIBRARY_LOWEST_INTERRUPT_PRIORITY << (8 - configPRIO_BITS) )
+..\Inc\FreeRTOSConfig.h(183): warning:  #47-D: incompatible redefinition of macro "configMAX_SYSCALL_INTERRUPT_PRIORITY"  (declared at line 65)
+  #define configMAX_SYSCALL_INTERRUPT_PRIORITY 	( configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY << (8 - configPRIO_BITS) )
+..\Inc\FreeRTOSConfig.h(247): warning:  #1-D: last line of file ends without a newline
+  #endif /* FREERTOS_CONFIG_H */
+..\Inc\control_task_v3.h(568): warning:  #1-D: last line of file ends without a newline
+  /************************ (C) COPYRIGHT Ink Supply Control System *****END OF FILE****/
+..\Src\control_task_v3.c(61): warning:  #188-D: enumerated type mixed with another type
+  static control_context_t g_control_context = {0};
+..\Src\control_task_v3.c(199): warning:  #870-D: invalid multibyte character sequence
+      printf("[ControlV3] 控制任务启动 - 周期: %d ms, 优先�?: %d\r\n",
+..\Src\control_task_v3.c(263): warning:  #870-D: invalid multibyte character sequence
+              printf("[ControlV3] 周期=%lu, 质量=%d%%, 稳定�?=%.2f, 执行时间=%luμs\r\n",
+..\Src\control_task_v3.c(338): warning:  #870-D: invalid multibyte character sequence
+      printf("[ControlV3] 紧急停止触�?!\r\n");
+..\Src\control_task_v3.c(463): warning:  #188-D: enumerated type mixed with another type
+          loop->sensor_type = SENSOR_TEMP_1 + (i - CONTROL_LOOP_TEMP_1);
+..\Src\control_task_v3.c(464): warning:  #188-D: enumerated type mixed with another type
+          loop->actuator_type = ACTUATOR_HEATER_1 + (i - CONTROL_LOOP_TEMP_1);
+..\Src\control_task_v3.c(508): warning:  #188-D: enumerated type mixed with another type
+          loop->sensor_type = SENSOR_PRESSURE_1 + (i - CONTROL_LOOP_PRESSURE_1);
+..\Src\control_task_v3.c(509): warning:  #188-D: enumerated type mixed with another type
+          loop->actuator_type = ACTUATOR_PUMP_SPEED_1 + ((i - CONTROL_LOOP_PRESSURE_1) % 2);
+..\Src\control_task_v3.c(553): warning:  #188-D: enumerated type mixed with another type
+          loop->sensor_type = SENSOR_LEVEL_1 + (i - CONTROL_LOOP_LEVEL_1);
+..\Src\control_task_v3.c(554): warning:  #188-D: enumerated type mixed with another type
+          loop->actuator_type = ACTUATOR_VALVE_1 + ((i - CONTROL_LOOP_LEVEL_1) % 2);
+..\Src\control_task_v3.c(1221): warning:  #1-D: last line of file ends without a newline
+  /************************ (C) COPYRIGHT Ink Supply Control System *****END OF FILE****/
+..\Src\control_task_v3.c(67): warning:  #550-D: variable "g_quality_history"  was set but never used
+  static float g_quality_history[CONTROL_LOOP_COUNT][CONTROL_QUALITY_SAMPLES] = {0};
+..\Src\control_task_v3.c(71): warning:  #550-D: variable "g_stability_buffer"  was set but never used
+  static float g_stability_buffer[CONTROL_LOOP_COUNT][STABILITY_CHECK_CYCLES] = {0};
+..\Src\control_task_v3.c(1082): warning:  #177-D: function "PID_AntiWindup"  was declared but never referenced
+  static float PID_AntiWindup(control_loop_t loop_id, float output)
+..\Src\control_task_v3.c: 18 warnings, 0 errors
+linking...
+Program Size: Code=47420 RO-data=2052 RW-data=1416 ZI-data=81160  
+FromELF: creating hex file...
+"YS-F4STD\YS-F4STD.axf" - 0 Error(s), 18 Warning(s).
 
 <h2>Software Packages used:</h2>
 
@@ -41,7 +82,7 @@ Package Vendor: Keil
   C:\Keil_v5\ARM\PACK\Keil\STM32F4xx_DFP\2.15.0\Drivers\CMSIS\Device\ST\STM32F4xx\Include
 
 <h2>Collection of Component Files used:</h2>
-Build Time Elapsed:  00:00:01
+Build Time Elapsed:  00:00:04
 </pre>
 </body>
 </html>

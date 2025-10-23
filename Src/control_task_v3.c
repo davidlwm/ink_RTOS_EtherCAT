@@ -632,3 +632,909 @@ static void Control_InitializeLoops(void)
 
     printf("[ControlV3] 控制回路配置初始化完成\r\n");
 }
+
+/**
+ * @brief 处理命令队列中的命令
+ */
+static void Control_ProcessCommands(void)
+{
+    control_command_t command;
+
+    // 处理所有待处理的命令
+    while (xQueueReceive(xQueue_ControlCmd, &command, 0) == pdPASS) {
+        // 验证命令参数
+        if (command.loop_id >= CONTROL_LOOP_COUNT) {
+            g_control_stats.command_errors++;
+            continue;
+        }
+
+        control_loop_config_t *loop = &g_control_context.loops[command.loop_id];
+
+        // 处理不同类型的命令
+        switch (command.cmd_type) {
+            case CONTROL_CMD_SET_SETPOINT:
+                // 限制设定值范围
+                if (command.value < loop->setpoint_min) {
+                    command.value = loop->setpoint_min;
+                }
+                if (command.value > loop->setpoint_max) {
+                    command.value = loop->setpoint_max;
+                }
+                loop->setpoint = command.value;
+                loop->pid_state.setpoint = command.value;
+                break;
+
+            case CONTROL_CMD_SET_MODE:
+                loop->mode = command.mode;
+                loop->auto_mode = (command.mode == CONTROL_MODE_AUTO);
+                g_control_stats.mode_switches++;
+                xEventGroupSetBits(xEventGroup_Control, EVENT_CONTROL_MODE_SWITCH);
+                break;
+
+            case CONTROL_CMD_ENABLE_LOOP:
+                loop->enabled = true;
+                loop->state = CONTROL_STATE_RUNNING;
+                PID_Reset(command.loop_id);
+                break;
+
+            case CONTROL_CMD_DISABLE_LOOP:
+                loop->enabled = false;
+                loop->state = CONTROL_STATE_IDLE;
+                loop->output_value = 0.0f;
+                break;
+
+            case CONTROL_CMD_RESET_LOOP:
+                PID_Reset(command.loop_id);
+                loop->state = CONTROL_STATE_IDLE;
+                break;
+
+            case CONTROL_CMD_EMERGENCY_STOP:
+                g_control_context.emergency_stop = true;
+                g_control_context.safety_mode = true;
+                for (uint8_t i = 0; i < CONTROL_LOOP_COUNT; i++) {
+                    g_control_context.loops[i].enabled = false;
+                    g_control_context.loops[i].state = CONTROL_STATE_SAFETY;
+                    g_control_context.loops[i].output_value = 0.0f;
+                }
+                g_control_stats.emergency_stops++;
+                xEventGroupSetBits(xEventGroup_Control, EVENT_CONTROL_EMERGENCY);
+                break;
+
+            case CONTROL_CMD_RESUME:
+                g_control_context.emergency_stop = false;
+                g_control_context.safety_mode = false;
+                break;
+
+            case CONTROL_CMD_UPDATE_PARAMS:
+                PID_SetParams(command.loop_id, &command.pid_params);
+                break;
+
+            default:
+                g_control_stats.command_errors++;
+                break;
+        }
+    }
+}
+
+/**
+ * @brief 更新传感器数据
+ */
+static void Control_UpdateSensorData(void)
+{
+    // 从传感器任务获取最新数据
+    BaseType_t result = SensorTaskV3_GetContext(&g_control_context.sensor_data);
+
+    if (result == pdTRUE) {
+        g_control_context.sensor_data_valid = true;
+        g_control_context.sensor_data_age = 0;
+    } else {
+        g_control_context.sensor_data_age += CONTROL_TASK_PERIOD_MS;
+
+        // 检查数据超时
+        if (g_control_context.sensor_data_age > PROCESS_VALUE_TIMEOUT_MS) {
+            g_control_context.sensor_data_valid = false;
+            g_control_stats.sensor_timeouts++;
+        }
+    }
+}
+
+/**
+ * @brief 执行所有控制回路
+ */
+static void Control_ExecuteControlLoops(void)
+{
+    for (uint8_t i = 0; i < CONTROL_LOOP_COUNT; i++) {
+        control_loop_config_t *loop = &g_control_context.loops[i];
+
+        // 跳过未使能或非自动模式的回路
+        if (!loop->enabled || !loop->auto_mode) {
+            continue;
+        }
+
+        // 获取过程值
+        float process_value = Control_GetSensorValue((control_loop_t)i);
+        loop->process_value = process_value;
+
+        // 检查传感器数据有效性
+        if (!Control_IsSensorValid((control_loop_t)i)) {
+            loop->state = CONTROL_STATE_ERROR;
+            continue;
+        }
+
+        // 执行PID控制
+        float output = PID_Calculate((control_loop_t)i, loop->setpoint, process_value);
+        loop->output_value = output;
+        loop->state = CONTROL_STATE_RUNNING;
+
+        // 更新回路统计
+        loop->total_run_time += CONTROL_TASK_PERIOD_MS;
+        loop->last_update_time = HAL_GetTick();
+    }
+}
+
+/**
+ * @brief 更新执行器输出
+ */
+static void Control_UpdateActuators(void)
+{
+    for (uint8_t i = 0; i < CONTROL_LOOP_COUNT; i++) {
+        control_loop_config_t *loop = &g_control_context.loops[i];
+
+        // 只更新使能且自动模式的回路
+        if (!loop->enabled || !loop->auto_mode) {
+            continue;
+        }
+
+        // 设置执行器输出
+        BaseType_t result = Control_SetActuatorOutput((control_loop_t)i, loop->output_value);
+
+        if (result != pdTRUE) {
+            g_control_stats.actuator_errors++;
+        }
+    }
+
+    // 更新执行器状态时间戳
+    g_control_context.actuator_update_time = HAL_GetTick();
+    g_control_context.actuator_states_valid = true;
+}
+
+/**
+ * @brief 检查报警和安全状态
+ */
+static void Control_CheckAlarms(void)
+{
+    for (uint8_t i = 0; i < CONTROL_LOOP_COUNT; i++) {
+        control_loop_config_t *loop = &g_control_context.loops[i];
+
+        if (!loop->enabled) {
+            continue;
+        }
+
+        float pv = loop->process_value;
+
+        // 检查高报警
+        if (pv > loop->alarm_high) {
+            if (!loop->alarm_status) {
+                loop->alarm_status = true;
+                xEventGroupSetBits(xEventGroup_Control, EVENT_CONTROL_ALARM);
+            }
+        }
+        // 检查低报警
+        else if (pv < loop->alarm_low) {
+            if (!loop->alarm_status) {
+                loop->alarm_status = true;
+                xEventGroupSetBits(xEventGroup_Control, EVENT_CONTROL_ALARM);
+            }
+        }
+        // 检查警告限制
+        else if (pv > loop->warning_high || pv < loop->warning_low) {
+            loop->warning_status = true;
+        }
+        else {
+            loop->alarm_status = false;
+            loop->warning_status = false;
+        }
+    }
+}
+
+/**
+ * @brief 更新控制质量评估
+ */
+static void Control_UpdateQuality(void)
+{
+    uint32_t total_quality = 0;
+    uint8_t enabled_loops = 0;
+
+    for (uint8_t i = 0; i < CONTROL_LOOP_COUNT; i++) {
+        control_loop_config_t *loop = &g_control_context.loops[i];
+
+        if (loop->enabled && loop->auto_mode) {
+            float quality = Control_CalculateLoopQuality((control_loop_t)i);
+            loop->control_quality = quality;
+
+            // 存储质量历史
+            uint8_t idx = g_quality_index[i];
+            g_quality_history[i][idx] = quality;
+            g_quality_index[i] = (idx + 1) % CONTROL_QUALITY_SAMPLES;
+
+            total_quality += (uint32_t)quality;
+            enabled_loops++;
+            loop->quality_update_count++;
+        }
+    }
+
+    // 计算整体控制质量
+    if (enabled_loops > 0) {
+        g_control_context.overall_quality = (uint8_t)(total_quality / enabled_loops);
+    }
+
+    // 更新统计信息
+    g_control_stats.avg_control_quality = (float)g_control_context.overall_quality;
+
+    // 设置质量更新事件
+    xEventGroupSetBits(xEventGroup_Control, EVENT_CONTROL_QUALITY_UPDATE);
+}
+
+/**
+ * @brief 检查系统稳定性
+ */
+static void Control_CheckStability(void)
+{
+    float total_stability = 0.0f;
+    uint8_t enabled_loops = 0;
+
+    for (uint8_t i = 0; i < CONTROL_LOOP_COUNT; i++) {
+        control_loop_config_t *loop = &g_control_context.loops[i];
+
+        if (loop->enabled && loop->auto_mode) {
+            float stability = Control_CalculateLoopStability((control_loop_t)i);
+
+            // 存储稳定性历史
+            uint8_t idx = g_stability_index[i];
+            g_stability_buffer[i][idx] = stability;
+            g_stability_index[i] = (idx + 1) % STABILITY_CHECK_CYCLES;
+
+            total_stability += stability;
+            enabled_loops++;
+        }
+    }
+
+    // 计算整体系统稳定性
+    if (enabled_loops > 0) {
+        g_control_context.system_stability = total_stability / enabled_loops;
+    }
+}
+
+/**
+ * @brief 发送状态消息
+ */
+static void Control_SendStatusMessage(void)
+{
+    control_msg_t status_msg;
+
+    status_msg.type = MSG_CONTROL_STATUS;
+    status_msg.timestamp = HAL_GetTick();
+    status_msg.data_len = sizeof(control_context_t);
+
+    // 获取互斥体并复制上下文
+    if (xSemaphoreTake(xMutex_ControlContext, pdMS_TO_TICKS(5)) == pdTRUE) {
+        memcpy(&status_msg.data.context, &g_control_context, sizeof(control_context_t));
+        xSemaphoreGive(xMutex_ControlContext);
+
+        // 发送消息到队列
+        xQueueSend(xQueue_ControlMsg, &status_msg, 0);
+    }
+}
+
+/**
+ * @brief PID控制器计算
+ * @param loop_id 控制回路ID
+ * @param setpoint 设定值
+ * @param process_value 过程值
+ * @return 控制输出
+ */
+static float PID_Calculate(control_loop_t loop_id, float setpoint, float process_value)
+{
+    if (loop_id >= CONTROL_LOOP_COUNT) {
+        return 0.0f;
+    }
+
+    control_loop_config_t *loop = &g_control_context.loops[loop_id];
+    pid_params_t *params = &loop->pid_params;
+    pid_state_t *state = &loop->pid_state;
+
+    if (!params->enabled) {
+        return 0.0f;
+    }
+
+    // 计算误差
+    float error = setpoint - process_value;
+    state->error = error;
+
+    // 死区处理
+    if (fabsf(error) < params->deadband) {
+        state->in_deadband = true;
+        error = 0.0f;
+    } else {
+        state->in_deadband = false;
+    }
+
+    // 比例项
+    float p_term = params->kp * error;
+
+    // 积分项
+    float i_term = 0.0f;
+    if (params->integral_enabled && !state->in_deadband) {
+        state->integral += error * params->sample_time;
+
+        // 积分限幅
+        if (state->integral > params->integral_max) {
+            state->integral = params->integral_max;
+        }
+        if (state->integral < params->integral_min) {
+            state->integral = params->integral_min;
+        }
+
+        i_term = params->ki * state->integral;
+    }
+
+    // 微分项
+    float d_term = 0.0f;
+    if (params->derivative_enabled && !state->first_run) {
+        float derivative = (error - state->last_error) / params->sample_time;
+
+        // 微分滤波
+        state->filtered_derivative = params->derivative_filter * derivative +
+                                     (1.0f - params->derivative_filter) * state->filtered_derivative;
+
+        d_term = params->kd * state->filtered_derivative;
+        state->derivative = state->filtered_derivative;
+    }
+
+    // 计算总输出
+    float output = p_term + i_term + d_term;
+
+    // 输出限幅
+    if (output > params->output_max) {
+        output = params->output_max;
+        state->output_saturated = true;
+
+        // 抗积分饱和
+        if (params->anti_windup_enabled && params->integral_enabled) {
+            state->integral -= error * params->sample_time;
+        }
+    } else if (output < params->output_min) {
+        output = params->output_min;
+        state->output_saturated = true;
+
+        // 抗积分饱和
+        if (params->anti_windup_enabled && params->integral_enabled) {
+            state->integral -= error * params->sample_time;
+        }
+    } else {
+        state->output_saturated = false;
+    }
+
+    // 更新状态
+    state->last_error = error;
+    state->output = output;
+    state->process_value = process_value;
+    state->setpoint = setpoint;
+    state->last_update_time = HAL_GetTick();
+    state->cycle_count++;
+    state->first_run = false;
+
+    // 更新统计信息
+    if (fabsf(error) > state->max_error) {
+        state->max_error = fabsf(error);
+    }
+    state->avg_error = (state->avg_error * (state->cycle_count - 1) + fabsf(error)) / state->cycle_count;
+
+    return output;
+}
+
+/**
+ * @brief 复位PID控制器
+ * @param loop_id 控制回路ID
+ */
+static void PID_Reset(control_loop_t loop_id)
+{
+    if (loop_id >= CONTROL_LOOP_COUNT) {
+        return;
+    }
+
+    pid_state_t *state = &g_control_context.loops[loop_id].pid_state;
+
+    state->error = 0.0f;
+    state->last_error = 0.0f;
+    state->integral = 0.0f;
+    state->derivative = 0.0f;
+    state->filtered_derivative = 0.0f;
+    state->output = 0.0f;
+    state->first_run = true;
+    state->in_deadband = false;
+    state->output_saturated = false;
+    state->cycle_count = 0;
+    state->max_error = 0.0f;
+    state->avg_error = 0.0f;
+}
+
+/**
+ * @brief 设置PID参数
+ * @param loop_id 控制回路ID
+ * @param params PID参数结构指针
+ */
+static void PID_SetParams(control_loop_t loop_id, const pid_params_t *params)
+{
+    if (loop_id >= CONTROL_LOOP_COUNT || params == NULL) {
+        return;
+    }
+
+    memcpy(&g_control_context.loops[loop_id].pid_params, params, sizeof(pid_params_t));
+}
+
+/**
+ * @brief 抗积分饱和处理
+ * @param loop_id 控制回路ID
+ * @param output 输出值
+ * @return 处理后的输出值
+ */
+static float PID_AntiWindup(control_loop_t loop_id, float output)
+{
+    if (loop_id >= CONTROL_LOOP_COUNT) {
+        return output;
+    }
+
+    control_loop_config_t *loop = &g_control_context.loops[loop_id];
+    pid_params_t *params = &loop->pid_params;
+
+    // 限制输出范围
+    if (output > params->output_max) {
+        return params->output_max;
+    }
+    if (output < params->output_min) {
+        return params->output_min;
+    }
+
+    return output;
+}
+
+/**
+ * @brief 获取传感器值
+ * @param loop_id 控制回路ID
+ * @return 传感器值
+ */
+static float Control_GetSensorValue(control_loop_t loop_id)
+{
+    if (loop_id >= CONTROL_LOOP_COUNT) {
+        return 0.0f;
+    }
+
+    control_loop_config_t *loop = &g_control_context.loops[loop_id];
+    sensor_type_t sensor_type = loop->sensor_type;
+
+    // 从传感器上下文中获取对应的传感器数据
+    if (!g_control_context.sensor_data_valid) {
+        return 0.0f;
+    }
+
+    return g_control_context.sensor_data.sensors[sensor_type].calibrated_value;
+}
+
+/**
+ * @brief 检查传感器数据有效性
+ * @param loop_id 控制回路ID
+ * @return true=有效, false=无效
+ */
+static bool Control_IsSensorValid(control_loop_t loop_id)
+{
+    if (loop_id >= CONTROL_LOOP_COUNT) {
+        return false;
+    }
+
+    if (!g_control_context.sensor_data_valid) {
+        return false;
+    }
+
+    control_loop_config_t *loop = &g_control_context.loops[loop_id];
+    sensor_type_t sensor_type = loop->sensor_type;
+
+    return g_control_context.sensor_data.sensors[sensor_type].valid;
+}
+
+/**
+ * @brief 设置执行器输出
+ * @param loop_id 控制回路ID
+ * @param output 输出值
+ * @return pdTRUE=成功, pdFALSE=失败
+ */
+static BaseType_t Control_SetActuatorOutput(control_loop_t loop_id, float output)
+{
+    if (loop_id >= CONTROL_LOOP_COUNT) {
+        return pdFALSE;
+    }
+
+    control_loop_config_t *loop = &g_control_context.loops[loop_id];
+    actuator_type_t actuator_type = loop->actuator_type;
+
+    // 调用执行器任务API设置输出
+    return ActuatorTaskV3_SetOutput(actuator_type, output);
+}
+
+/**
+ * @brief 计算控制回路质量
+ * @param loop_id 控制回路ID
+ * @return 质量分数 (0-100)
+ */
+static float Control_CalculateLoopQuality(control_loop_t loop_id)
+{
+    if (loop_id >= CONTROL_LOOP_COUNT) {
+        return 0.0f;
+    }
+
+    control_loop_config_t *loop = &g_control_context.loops[loop_id];
+    pid_state_t *state = &loop->pid_state;
+
+    // 基于误差的质量评估
+    float error_ratio = fabsf(state->error) / (loop->setpoint_max - loop->setpoint_min);
+    float error_quality = (1.0f - error_ratio) * 100.0f;
+
+    // 限制范围
+    if (error_quality < 0.0f) error_quality = 0.0f;
+    if (error_quality > 100.0f) error_quality = 100.0f;
+
+    // 检查报警状态
+    if (loop->alarm_status) {
+        error_quality *= 0.5f;  // 报警时质量减半
+    } else if (loop->warning_status) {
+        error_quality *= 0.8f;  // 警告时质量减少20%
+    }
+
+    return error_quality;
+}
+
+/**
+ * @brief 计算控制回路稳定性
+ * @param loop_id 控制回路ID
+ * @return 稳定性指标 (0.0-1.0)
+ */
+static float Control_CalculateLoopStability(control_loop_t loop_id)
+{
+    if (loop_id >= CONTROL_LOOP_COUNT) {
+        return 0.0f;
+    }
+
+    control_loop_config_t *loop = &g_control_context.loops[loop_id];
+    pid_state_t *state = &loop->pid_state;
+
+    // 基于误差变化率的稳定性评估
+    float error_change = fabsf(state->error - state->last_error);
+    float stability = 1.0f - (error_change / (loop->setpoint_max - loop->setpoint_min));
+
+    // 限制范围
+    if (stability < 0.0f) stability = 0.0f;
+    if (stability > 1.0f) stability = 1.0f;
+
+    return stability;
+}
+
+/**
+ * @brief 使能控制回路
+ * @param loop_id 控制回路ID
+ * @return pdTRUE=成功, pdFALSE=失败
+ */
+BaseType_t ControlTaskV3_EnableLoop(control_loop_t loop_id)
+{
+    control_command_t command;
+
+    if (loop_id >= CONTROL_LOOP_COUNT) {
+        return pdFALSE;
+    }
+
+    command.cmd_type = CONTROL_CMD_ENABLE_LOOP;
+    command.loop_id = loop_id;
+    command.timestamp = HAL_GetTick();
+    command.urgent = false;
+
+    return ControlTaskV3_SendCommand(&command, 10);
+}
+
+/**
+ * @brief 禁用控制回路
+ * @param loop_id 控制回路ID
+ * @return pdTRUE=成功, pdFALSE=失败
+ */
+BaseType_t ControlTaskV3_DisableLoop(control_loop_t loop_id)
+{
+    control_command_t command;
+
+    if (loop_id >= CONTROL_LOOP_COUNT) {
+        return pdFALSE;
+    }
+
+    command.cmd_type = CONTROL_CMD_DISABLE_LOOP;
+    command.loop_id = loop_id;
+    command.timestamp = HAL_GetTick();
+    command.urgent = false;
+
+    return ControlTaskV3_SendCommand(&command, 10);
+}
+
+/**
+ * @brief 设置PID参数
+ * @param loop_id 控制回路ID
+ * @param params PID参数结构指针
+ * @return pdTRUE=成功, pdFALSE=失败
+ */
+BaseType_t ControlTaskV3_SetPIDParams(control_loop_t loop_id, const pid_params_t *params)
+{
+    control_command_t command;
+
+    if (loop_id >= CONTROL_LOOP_COUNT || params == NULL) {
+        return pdFALSE;
+    }
+
+    command.cmd_type = CONTROL_CMD_UPDATE_PARAMS;
+    command.loop_id = loop_id;
+    memcpy(&command.pid_params, params, sizeof(pid_params_t));
+    command.timestamp = HAL_GetTick();
+    command.urgent = false;
+
+    return ControlTaskV3_SendCommand(&command, 10);
+}
+
+/**
+ * @brief 启动PID自整定
+ * @param loop_id 控制回路ID
+ * @return pdTRUE=成功, pdFALSE=失败
+ */
+BaseType_t ControlTaskV3_StartAutoTune(control_loop_t loop_id)
+{
+    control_command_t command;
+
+    if (loop_id >= CONTROL_LOOP_COUNT) {
+        return pdFALSE;
+    }
+
+    command.cmd_type = CONTROL_CMD_TUNE_PID;
+    command.loop_id = loop_id;
+    command.timestamp = HAL_GetTick();
+    command.urgent = false;
+
+    // TODO: 实现自整定算法
+    return ControlTaskV3_SendCommand(&command, 10);
+}
+
+/**
+ * @brief 停止PID自整定
+ * @param loop_id 控制回路ID
+ * @return pdTRUE=成功, pdFALSE=失败
+ */
+BaseType_t ControlTaskV3_StopAutoTune(control_loop_t loop_id)
+{
+    if (loop_id >= CONTROL_LOOP_COUNT) {
+        return pdFALSE;
+    }
+
+    // TODO: 实现停止自整定逻辑
+    return pdTRUE;
+}
+
+/**
+ * @brief 恢复控制系统运行
+ * @return pdTRUE=成功, pdFALSE=失败
+ */
+BaseType_t ControlTaskV3_Resume(void)
+{
+    control_command_t command;
+
+    command.cmd_type = CONTROL_CMD_RESUME;
+    command.loop_id = CONTROL_LOOP_TEMP_1;  // 不关心具体回路
+    command.timestamp = HAL_GetTick();
+    command.urgent = false;
+
+    printf("[ControlV3] 系统恢复运行\r\n");
+
+    return ControlTaskV3_SendCommand(&command, 10);
+}
+
+/**
+ * @brief 复位控制回路
+ * @param loop_id 控制回路ID
+ * @return pdTRUE=成功, pdFALSE=失败
+ */
+BaseType_t ControlTaskV3_ResetLoop(control_loop_t loop_id)
+{
+    control_command_t command;
+
+    if (loop_id >= CONTROL_LOOP_COUNT) {
+        return pdFALSE;
+    }
+
+    command.cmd_type = CONTROL_CMD_RESET_LOOP;
+    command.loop_id = loop_id;
+    command.timestamp = HAL_GetTick();
+    command.urgent = false;
+
+    return ControlTaskV3_SendCommand(&command, 10);
+}
+
+/**
+ * @brief 获取控制回路配置
+ * @param loop_id 控制回路ID
+ * @param config 配置结构指针
+ * @return pdTRUE=成功, pdFALSE=失败
+ */
+BaseType_t ControlTaskV3_GetLoopConfig(control_loop_t loop_id, control_loop_config_t *config)
+{
+    if (loop_id >= CONTROL_LOOP_COUNT || config == NULL) {
+        return pdFALSE;
+    }
+
+    if (xSemaphoreTake(xMutex_ControlContext, pdMS_TO_TICKS(10)) == pdTRUE) {
+        memcpy(config, &g_control_context.loops[loop_id], sizeof(control_loop_config_t));
+        xSemaphoreGive(xMutex_ControlContext);
+        return pdTRUE;
+    }
+
+    return pdFALSE;
+}
+
+/**
+ * @brief 获取PID状态
+ * @param loop_id 控制回路ID
+ * @param state PID状态结构指针
+ * @return pdTRUE=成功, pdFALSE=失败
+ */
+BaseType_t ControlTaskV3_GetPIDState(control_loop_t loop_id, pid_state_t *state)
+{
+    if (loop_id >= CONTROL_LOOP_COUNT || state == NULL) {
+        return pdFALSE;
+    }
+
+    if (xSemaphoreTake(xMutex_ControlContext, pdMS_TO_TICKS(10)) == pdTRUE) {
+        memcpy(state, &g_control_context.loops[loop_id].pid_state, sizeof(pid_state_t));
+        xSemaphoreGive(xMutex_ControlContext);
+        return pdTRUE;
+    }
+
+    return pdFALSE;
+}
+
+/**
+ * @brief 发送控制消息到队列
+ * @param msg 消息结构指针
+ * @param timeout_ms 超时时间
+ * @return pdTRUE=成功, pdFALSE=失败
+ */
+BaseType_t ControlTaskV3_SendMessage(const control_msg_t *msg, uint32_t timeout_ms)
+{
+    if (msg == NULL) {
+        return pdFALSE;
+    }
+
+    return xQueueSend(xQueue_ControlMsg, msg, pdMS_TO_TICKS(timeout_ms));
+}
+
+/**
+ * @brief 从队列接收控制消息
+ * @param msg 消息结构指针
+ * @param timeout_ms 超时时间
+ * @return pdTRUE=成功, pdFALSE=失败
+ */
+BaseType_t ControlTaskV3_ReceiveMessage(control_msg_t *msg, uint32_t timeout_ms)
+{
+    if (msg == NULL) {
+        return pdFALSE;
+    }
+
+    return xQueueReceive(xQueue_ControlMsg, msg, pdMS_TO_TICKS(timeout_ms));
+}
+
+/**
+ * @brief 重置控制任务统计信息
+ */
+void ControlTaskV3_ResetStatistics(void)
+{
+    memset(&g_control_stats, 0, sizeof(control_task_stats_t));
+    printf("[ControlV3] 统计信息已重置\r\n");
+}
+
+/**
+ * @brief 计算控制质量分数
+ * @param loop_id 控制回路ID
+ * @return 质量分数 (0-100)
+ */
+uint8_t ControlTaskV3_CalculateQuality(control_loop_t loop_id)
+{
+    if (loop_id >= CONTROL_LOOP_COUNT) {
+        return 0;
+    }
+
+    return (uint8_t)g_control_context.loops[loop_id].control_quality;
+}
+
+/**
+ * @brief 检查系统稳定性
+ * @return 稳定性指标 (0.0-1.0)
+ */
+float ControlTaskV3_CheckStability(void)
+{
+    return g_control_context.system_stability;
+}
+
+/**
+ * @brief 获取控制回路过程值
+ * @param loop_id 控制回路ID
+ * @return 过程值
+ */
+float ControlTaskV3_GetProcessValue(control_loop_t loop_id)
+{
+    if (loop_id >= CONTROL_LOOP_COUNT) {
+        return 0.0f;
+    }
+
+    return g_control_context.loops[loop_id].process_value;
+}
+
+/**
+ * @brief 获取控制回路输出值
+ * @param loop_id 控制回路ID
+ * @return 输出值
+ */
+float ControlTaskV3_GetOutputValue(control_loop_t loop_id)
+{
+    if (loop_id >= CONTROL_LOOP_COUNT) {
+        return 0.0f;
+    }
+
+    return g_control_context.loops[loop_id].output_value;
+}
+
+/**
+ * @brief 检查控制回路是否在自动模式
+ * @param loop_id 控制回路ID
+ * @return true=自动模式, false=手动模式
+ */
+bool ControlTaskV3_IsAutoMode(control_loop_t loop_id)
+{
+    if (loop_id >= CONTROL_LOOP_COUNT) {
+        return false;
+    }
+
+    return g_control_context.loops[loop_id].auto_mode;
+}
+
+/**
+ * @brief 检查控制回路是否有报警
+ * @param loop_id 控制回路ID
+ * @return true=有报警, false=无报警
+ */
+bool ControlTaskV3_HasAlarm(control_loop_t loop_id)
+{
+    if (loop_id >= CONTROL_LOOP_COUNT) {
+        return false;
+    }
+
+    return g_control_context.loops[loop_id].alarm_status;
+}
+
+/**
+ * @brief 检查系统是否处于紧急停止状态
+ * @return true=紧急停止, false=正常
+ */
+bool ControlTaskV3_IsEmergencyStopped(void)
+{
+    return g_control_context.emergency_stop;
+}
+
+/**
+ * @brief 检查系统是否处于安全模式
+ * @return true=安全模式, false=正常模式
+ */
+bool ControlTaskV3_IsInSafetyMode(void)
+{
+    return g_control_context.safety_mode;
+}
+
+/************************ (C) COPYRIGHT Ink Supply Control System *****END OF FILE****/
