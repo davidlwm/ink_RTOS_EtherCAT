@@ -646,6 +646,16 @@
               <FilePath>..\Src\bsp\led\bsp_led.c</FilePath>
             </File>
             <File>
+              <FileName>bsp_ads8688.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\bsp\ads8688\bsp_ads8688.c</FilePath>
+            </File>
+            <File>
+              <FileName>ADS8688.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\bsp\ads8688\ADS8688.c</FilePath>
+            </File>
+            <File>
               <FileName>bsp_GeneralTIM.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Src\bsp\GeneralTIM\bsp_GeneralTIM.c</FilePath>
@@ -783,22 +793,22 @@
             <File>
               <FileName>actuator_task_v3.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\Src\actuator_task_v3.c</FilePath>
-            </File>
-            <File>
-              <FileName>sensor_task_v3.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Src\sensor_task_v3.c</FilePath>
-            </File>
-            <File>
-              <FileName>sensor_simulator.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Src\sensor_simulator.c</FilePath>
+              <FilePath>..\Src\APP\actuator_task_v3.c</FilePath>
             </File>
             <File>
               <FileName>control_task_v3.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\Src\control_task_v3.c</FilePath>
+              <FilePath>..\Src\APP\control_task_v3.c</FilePath>
+            </File>
+            <File>
+              <FileName>sensor_task_v3.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\APP\sensor_task_v3.c</FilePath>
+            </File>
+            <File>
+              <FileName>sensor_simulator.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\APP\sensor_simulator.c</FilePath>
             </File>
           </Files>
         </Group>

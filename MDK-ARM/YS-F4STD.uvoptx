@@ -1245,7 +1245,7 @@
       <tvExp>0</tvExp>
       <tvExpOptDlg>0</tvExpOptDlg>
       <bDave2>0</bDave2>
-      <PathWithFileName>..\Src\actuator_task_v3.c</PathWithFileName>
+      <PathWithFileName>..\Src\APP\actuator_task_v3.c</PathWithFileName>
       <FilenameWithoutPath>actuator_task_v3.c</FilenameWithoutPath>
       <RteFlg>0</RteFlg>
       <bShared>0</bShared>
@@ -1257,8 +1257,8 @@
       <tvExp>0</tvExp>
       <tvExpOptDlg>0</tvExpOptDlg>
       <bDave2>0</bDave2>
-      <PathWithFileName>..\Src\sensor_task_v3.c</PathWithFileName>
-      <FilenameWithoutPath>sensor_task_v3.c</FilenameWithoutPath>
+      <PathWithFileName>..\Src\APP\control_task_v3.c</PathWithFileName>
+      <FilenameWithoutPath>control_task_v3.c</FilenameWithoutPath>
       <RteFlg>0</RteFlg>
       <bShared>0</bShared>
     </File>
@@ -1269,8 +1269,8 @@
       <tvExp>0</tvExp>
       <tvExpOptDlg>0</tvExpOptDlg>
       <bDave2>0</bDave2>
-      <PathWithFileName>..\Src\sensor_simulator.c</PathWithFileName>
-      <FilenameWithoutPath>sensor_simulator.c</FilenameWithoutPath>
+      <PathWithFileName>..\Src\APP\sensor_task_v3.c</PathWithFileName>
+      <FilenameWithoutPath>sensor_task_v3.c</FilenameWithoutPath>
       <RteFlg>0</RteFlg>
       <bShared>0</bShared>
     </File>
@@ -1281,8 +1281,8 @@
       <tvExp>0</tvExp>
       <tvExpOptDlg>0</tvExpOptDlg>
       <bDave2>0</bDave2>
-      <PathWithFileName>..\Src\control_task_v3.c</PathWithFileName>
-      <FilenameWithoutPath>control_task_v3.c</FilenameWithoutPath>
+      <PathWithFileName>..\Src\APP\sensor_simulator.c</PathWithFileName>
+      <FilenameWithoutPath>sensor_simulator.c</FilenameWithoutPath>
       <RteFlg>0</RteFlg>
       <bShared>0</bShared>
     </File>
