@@ -47,7 +47,7 @@ extern "C" {
 /* ========================================================================== */
 
 #define CONTROL_TASK_PRIORITY       12      // 控制任务优先级
-#define CONTROL_TASK_STACK_SIZE     384     // 堆栈大小 (1536字节/4=384 words)
+#define CONTROL_TASK_STACK_SIZE     1024    // 堆栈大小 (words) - 与传感器和执行器任务保持一致
 #define CONTROL_TASK_PERIOD_MS      20      // 任务周期 20ms (参考V3表格)
 
 /* ========================================================================== */

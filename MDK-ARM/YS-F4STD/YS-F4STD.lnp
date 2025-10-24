@@ -48,6 +48,8 @@
 "ys-f4std\bsp_gpio.o"
 "ys-f4std\bsp_spiflash.o"
 "ys-f4std\bsp_led.o"
+"ys-f4std\bsp_ads8688.o"
+"ys-f4std\ads8688.o"
 "ys-f4std\bsp_generaltim.o"
 "ys-f4std\el9800hw.o"
 "ys-f4std\ssc-device.o"

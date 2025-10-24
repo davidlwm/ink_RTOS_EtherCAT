@@ -52,70 +52,23 @@ compiling control_task_v3.c...
           loop->sensor_type = SENSOR_PRESSURE_1 + (i - CONTROL_LOOP_PRESSURE_1);
 ..\Src\APP\control_task_v3.c(509): warning:  #188-D: enumerated type mixed with another type
           loop->actuator_type = ACTUATOR_PUMP_SPEED_1 + ((i - CONTROL_LOOP_PRESSURE_1) % 2);
-..\Src\APP\control_task_v3.c(553): error:  #20: identifier "SENSOR_LEVEL_1" is undefined
-          loop->sensor_type = SENSOR_LEVEL_1 + (i - CONTROL_LOOP_LEVEL_1);
-..\Src\APP\control_task_v3.c(554): warning:  #188-D: enumerated type mixed with another type
+..\Src\APP\control_task_v3.c(557): warning:  #188-D: enumerated type mixed with another type
+              loop->sensor_type = SENSOR_LEVEL_FLOAT_1 + (i - CONTROL_LOOP_LEVEL_1);
+..\Src\APP\control_task_v3.c(563): warning:  #188-D: enumerated type mixed with another type
           loop->actuator_type = ACTUATOR_VALVE_1 + ((i - CONTROL_LOOP_LEVEL_1) % 2);
-..\Src\APP\control_task_v3.c(1540): warning:  #1-D: last line of file ends without a newline
+..\Src\APP\control_task_v3.c(1549): warning:  #1-D: last line of file ends without a newline
   /************************ (C) COPYRIGHT Ink Supply Control System *****END OF FILE****/
 ..\Src\APP\control_task_v3.c(67): warning:  #550-D: variable "g_quality_history"  was set but never used
   static float g_quality_history[CONTROL_LOOP_COUNT][CONTROL_QUALITY_SAMPLES] = {0};
 ..\Src\APP\control_task_v3.c(71): warning:  #550-D: variable "g_stability_buffer"  was set but never used
   static float g_stability_buffer[CONTROL_LOOP_COUNT][STABILITY_CHECK_CYCLES] = {0};
-..\Src\APP\control_task_v3.c(1082): warning:  #177-D: function "PID_AntiWindup"  was declared but never referenced
+..\Src\APP\control_task_v3.c(1091): warning:  #177-D: function "PID_AntiWindup"  was declared but never referenced
   static float PID_AntiWindup(control_loop_t loop_id, float output)
-..\Src\APP\control_task_v3.c: 17 warnings, 1 error
-compiling actuator_task_v3.c...
-..\Inc\FreeRTOSConfig.h(180): warning:  #47-D: incompatible redefinition of macro "configKERNEL_INTERRUPT_PRIORITY"  (declared at line 64)
-  #define configKERNEL_INTERRUPT_PRIORITY 		( configLIBRARY_LOWEST_INTERRUPT_PRIORITY << (8 - configPRIO_BITS) )
-..\Inc\FreeRTOSConfig.h(183): warning:  #47-D: incompatible redefinition of macro "configMAX_SYSCALL_INTERRUPT_PRIORITY"  (declared at line 65)
-  #define configMAX_SYSCALL_INTERRUPT_PRIORITY 	( configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY << (8 - configPRIO_BITS) )
-..\Inc\FreeRTOSConfig.h(247): warning:  #1-D: last line of file ends without a newline
-  #endif /* FREERTOS_CONFIG_H */
-..\Src\APP\actuator_task_v3.c(189): warning:  #870-D: invalid multibyte character sequence
-      printf("[ActuatorV3] 执行器任务启�? - 周期: %d ms, 优先�?: %d\r\n",
-..\Src\APP\actuator_task_v3.c(189): warning:  #870-D: invalid multibyte character sequence
-      printf("[ActuatorV3] 执行器任务启�? - 周期: %d ms, 优先�?: %d\r\n",
-..\Src\APP\actuator_task_v3.c(338): warning:  #870-D: invalid multibyte character sequence
-      printf("[ActuatorV3] 紧急停止触�?!\r\n");
-..\Src\APP\actuator_task_v3.c(438): warning:  #188-D: enumerated type mixed with another type
-      actuator_type_t actuator_type = ACTUATOR_HEATER_1 + heater_id;
-..\Src\APP\actuator_task_v3.c(766): warning:  #870-D: invalid multibyte character sequence
-      printf("[ActuatorV3] 硬件初始化完�?:\r\n");
-..\Src\APP\actuator_task_v3.c(768): warning:  #870-D: invalid multibyte character sequence
-      printf("  加热�?: PE4, PE5, PE6\r\n");
-..\Src\APP\actuator_task_v3.c(770): warning:  #870-D: invalid multibyte character sequence
-      printf("  直流�?: PF6, PF7\r\n");
-..\Src\APP\actuator_task_v3.c(813): warning:  #870-D: invalid multibyte character sequence
-                  printf("[ActuatorV3] 执行�? %d 已使能\r\n", command.actuator_type);
-..\Src\APP\actuator_task_v3.c(821): warning:  #870-D: invalid multibyte character sequence
-                  printf("[ActuatorV3] 执行�? %d 已禁用\r\n", command.actuator_type);
-..\Src\APP\actuator_task_v3.c(828): warning:  #870-D: invalid multibyte character sequence
-                  printf("[ActuatorV3] 执行�? %d 故障已复位\r\n", command.actuator_type);
-..\Src\APP\actuator_task_v3.c(779): warning:  #550-D: variable "result"  was set but never used
-      BaseType_t result;
-..\Src\APP\actuator_task_v3.c(1107): warning:  #870-D: invalid multibyte character sequence
-              printf("[ActuatorV3] 警告: 执行�? %d 长时间运�? (%lu ms)\r\n", i, status->run_time);
-..\Src\APP\actuator_task_v3.c(1107): warning:  #870-D: invalid multibyte character sequence
-              printf("[ActuatorV3] 警告: 执行�? %d 长时间运�? (%lu ms)\r\n", i, status->run_time);
-..\Src\APP\actuator_task_v3.c(1113): warning:  #870-D: invalid multibyte character sequence
-              printf("[ActuatorV3] 警告: 执行�? %d 开关次数过�? (%lu �?)\r\n", i, status->switch_count);
-..\Src\APP\actuator_task_v3.c(1113): warning:  #870-D: invalid multibyte character sequence
-              printf("[ActuatorV3] 警告: 执行�? %d 开关次数过�? (%lu �?)\r\n", i, status->switch_count);
-..\Src\APP\actuator_task_v3.c(1113): warning:  #870-D: invalid multibyte character sequence
-              printf("[ActuatorV3] 警告: 执行�? %d 开关次数过�? (%lu �?)\r\n", i, status->switch_count);
-..\Src\APP\actuator_task_v3.c(1119): warning:  #870-D: invalid multibyte character sequence
-              printf("[ActuatorV3] 安全检�?: 执行�? %d 存在故障 (代码: 0x%lx)\r\n", i, status->fault_code);
-..\Src\APP\actuator_task_v3.c(1119): warning:  #870-D: invalid multibyte character sequence
-              printf("[ActuatorV3] 安全检�?: 执行�? %d 存在故障 (代码: 0x%lx)\r\n", i, status->fault_code);
-..\Src\APP\actuator_task_v3.c(1158): warning:  #870-D: invalid multibyte character sequence
-                      printf("[ActuatorV3] 执行�? %d 故障检�?: 代码 0x%lx\r\n",
-..\Src\APP\actuator_task_v3.c(1158): warning:  #870-D: invalid multibyte character sequence
-                      printf("[ActuatorV3] 执行�? %d 故障检�?: 代码 0x%lx\r\n",
-..\Src\APP\actuator_task_v3.c(1525): warning:  #1-D: last line of file ends without a newline
-  /************************ (C) COPYRIGHT Ink Supply Control System *****END OF FILE****/
-..\Src\APP\actuator_task_v3.c: 24 warnings, 0 errors
-"YS-F4STD\YS-F4STD.axf" - 1 Error(s), 41 Warning(s).
+..\Src\APP\control_task_v3.c: 18 warnings, 0 errors
+linking...
+Program Size: Code=47420 RO-data=2052 RW-data=1416 ZI-data=81160  
+FromELF: creating hex file...
+"YS-F4STD\YS-F4STD.axf" - 0 Error(s), 18 Warning(s).
 
 <h2>Software Packages used:</h2>
 
@@ -129,7 +82,6 @@ Package Vendor: Keil
   C:\Keil_v5\ARM\PACK\Keil\STM32F4xx_DFP\2.15.0\Drivers\CMSIS\Device\ST\STM32F4xx\Include
 
 <h2>Collection of Component Files used:</h2>
-Target not created.
 Build Time Elapsed:  00:00:03
 </pre>
 </body>

@@ -550,7 +550,16 @@ static void Control_InitializeLoops(void)
         loop->loop_id = (control_loop_t)i;
         loop->mode = CONTROL_MODE_MANUAL;
         loop->state = CONTROL_STATE_IDLE;
-        loop->sensor_type = SENSOR_LEVEL_1 + (i - CONTROL_LOOP_LEVEL_1);
+
+        // 修正传感器映射 - 使用正确的液位传感器枚举
+        if (i <= CONTROL_LOOP_LEVEL_3) {
+            // 前三个回路使用浮球液位开关 (SENSOR_LEVEL_FLOAT_1/2/3)
+            loop->sensor_type = SENSOR_LEVEL_FLOAT_1 + (i - CONTROL_LOOP_LEVEL_1);
+        } else {
+            // 第四个回路使用模拟液位传感器 (SENSOR_LEVEL_ANALOG)
+            loop->sensor_type = SENSOR_LEVEL_ANALOG;
+        }
+
         loop->actuator_type = ACTUATOR_VALVE_1 + ((i - CONTROL_LOOP_LEVEL_1) % 2);
 
         // 默认PID参数 (液位控制)
