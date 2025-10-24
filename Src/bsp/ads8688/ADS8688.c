@@ -1,4 +1,4 @@
-#include "ADS8688.h"
+#include "ads8688/ADS8688.h"
 
 /*
  * INITIALISATION

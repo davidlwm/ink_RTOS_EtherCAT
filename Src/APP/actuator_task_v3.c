@@ -76,6 +76,7 @@ static uint32_t g_safety_check_counter = 0;
 /* ========================================================================== */
 
 static void Actuator_InitializeConfigs(void);
+static void Actuator_InitializeHardware(void);
 static void Actuator_ProcessCommands(void);
 static void Actuator_UpdateOutputs(void);
 static void Actuator_UpdateValves(void);
@@ -130,6 +131,9 @@ BaseType_t ActuatorTaskV3_Init(void)
 
     // 初始化执行器配置
     Actuator_InitializeConfigs();
+
+    // 初始化硬件(GPIO和PWM)
+    Actuator_InitializeHardware();
 
     // 初始化上下文
     memset(&g_actuator_context, 0, sizeof(actuator_context_t));
@@ -626,6 +630,147 @@ static void Actuator_InitializeConfigs(void)
 }
 
 /**
+ * @brief 初始化执行器硬件(GPIO和PWM)
+ */
+static void Actuator_InitializeHardware(void)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    TIM_HandleTypeDef htim14 = {0};
+    TIM_HandleTypeDef htim1 = {0};
+    TIM_OC_InitTypeDef sConfigOC = {0};
+
+    // 1. 初始化数字输出GPIO (电磁阀、加热器、直流泵)
+
+    // 使能GPIO时钟
+    VALVE_1_CLK_ENABLE();
+    VALVE_2_CLK_ENABLE();
+    HEATER_1_CLK_ENABLE();
+    HEATER_2_CLK_ENABLE();
+    HEATER_3_CLK_ENABLE();
+    PUMP_DC_1_CLK_ENABLE();
+    PUMP_DC_2_CLK_ENABLE();
+
+    // 配置电磁阀GPIO (PE2, PE3)
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+
+    GPIO_InitStruct.Pin = VALVE_1_PIN;
+    HAL_GPIO_Init(VALVE_1_PORT, &GPIO_InitStruct);
+    HAL_GPIO_WritePin(VALVE_1_PORT, VALVE_1_PIN, GPIO_PIN_RESET); // 初始状态关闭
+
+    GPIO_InitStruct.Pin = VALVE_2_PIN;
+    HAL_GPIO_Init(VALVE_2_PORT, &GPIO_InitStruct);
+    HAL_GPIO_WritePin(VALVE_2_PORT, VALVE_2_PIN, GPIO_PIN_RESET);
+
+    // 配置加热器GPIO (PE4, PE5, PE6)
+    GPIO_InitStruct.Pin = HEATER_1_PIN;
+    HAL_GPIO_Init(HEATER_1_PORT, &GPIO_InitStruct);
+    HAL_GPIO_WritePin(HEATER_1_PORT, HEATER_1_PIN, GPIO_PIN_RESET);
+
+    GPIO_InitStruct.Pin = HEATER_2_PIN;
+    HAL_GPIO_Init(HEATER_2_PORT, &GPIO_InitStruct);
+    HAL_GPIO_WritePin(HEATER_2_PORT, HEATER_2_PIN, GPIO_PIN_RESET);
+
+    GPIO_InitStruct.Pin = HEATER_3_PIN;
+    HAL_GPIO_Init(HEATER_3_PORT, &GPIO_InitStruct);
+    HAL_GPIO_WritePin(HEATER_3_PORT, HEATER_3_PIN, GPIO_PIN_RESET);
+
+    // 配置直流泵GPIO (PF6, PF7)
+    GPIO_InitStruct.Pin = PUMP_DC_1_PIN;
+    HAL_GPIO_Init(PUMP_DC_1_PORT, &GPIO_InitStruct);
+    HAL_GPIO_WritePin(PUMP_DC_1_PORT, PUMP_DC_1_PIN, GPIO_PIN_RESET);
+
+    GPIO_InitStruct.Pin = PUMP_DC_2_PIN;
+    HAL_GPIO_Init(PUMP_DC_2_PORT, &GPIO_InitStruct);
+    HAL_GPIO_WritePin(PUMP_DC_2_PORT, PUMP_DC_2_PIN, GPIO_PIN_RESET);
+
+    // 2. 初始化PWM输出 (调速泵)
+
+    // 使能定时器时钟
+    __HAL_RCC_TIM14_CLK_ENABLE();
+    __HAL_RCC_TIM1_CLK_ENABLE();
+    PUMP_SPEED_1_CLK_ENABLE();
+    PUMP_SPEED_2_CLK_ENABLE();
+
+    // 配置PWM GPIO
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+
+    // 调速泵1 PWM (PF9 -> TIM14_CH1)
+    GPIO_InitStruct.Pin = PUMP_SPEED_1_PIN;
+    GPIO_InitStruct.Alternate = GPIO_AF9_TIM14;
+    HAL_GPIO_Init(PUMP_SPEED_1_PORT, &GPIO_InitStruct);
+
+    // 调速泵2 PWM (PF10 -> TIM1_CH3)
+    GPIO_InitStruct.Pin = PUMP_SPEED_2_PIN;
+    GPIO_InitStruct.Alternate = GPIO_AF1_TIM1;
+    HAL_GPIO_Init(PUMP_SPEED_2_PORT, &GPIO_InitStruct);
+
+    // 配置TIM14 (调速泵1)
+    htim14.Instance = TIM14;
+    htim14.Init.Prescaler = 83;  // 84MHz/84 = 1MHz
+    htim14.Init.CounterMode = TIM_COUNTERMODE_UP;
+    htim14.Init.Period = 999;    // 1MHz/1000 = 1kHz PWM频率
+    htim14.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+    htim14.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+    if (HAL_TIM_PWM_Init(&htim14) != HAL_OK) {
+        printf("[ActuatorV3] ERROR: TIM14 PWM初始化失败\r\n");
+        return;
+    }
+
+    sConfigOC.OCMode = TIM_OCMODE_PWM1;
+    sConfigOC.Pulse = 0;  // 初始占空比0%
+    sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+    sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+    if (HAL_TIM_PWM_ConfigChannel(&htim14, &sConfigOC, TIM_CHANNEL_1) != HAL_OK) {
+        printf("[ActuatorV3] ERROR: TIM14 CH1配置失败\r\n");
+        return;
+    }
+
+    // 配置TIM1 (调速泵2)
+    htim1.Instance = TIM1;
+    htim1.Init.Prescaler = 83;   // 84MHz/84 = 1MHz
+    htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+    htim1.Init.Period = 999;     // 1MHz/1000 = 1kHz PWM频率
+    htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+    htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+    htim1.Init.RepetitionCounter = 0;
+    if (HAL_TIM_PWM_Init(&htim1) != HAL_OK) {
+        printf("[ActuatorV3] ERROR: TIM1 PWM初始化失败\r\n");
+        return;
+    }
+
+    sConfigOC.OCMode = TIM_OCMODE_PWM1;
+    sConfigOC.Pulse = 0;  // 初始占空比0%
+    sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+    sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
+    sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+    sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+    sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+    if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_3) != HAL_OK) {
+        printf("[ActuatorV3] ERROR: TIM1 CH3配置失败\r\n");
+        return;
+    }
+
+    // 启动PWM输出
+    if (HAL_TIM_PWM_Start(&htim14, TIM_CHANNEL_1) != HAL_OK) {
+        printf("[ActuatorV3] ERROR: TIM14 PWM启动失败\r\n");
+    }
+
+    if (HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3) != HAL_OK) {
+        printf("[ActuatorV3] ERROR: TIM1 PWM启动失败\r\n");
+    }
+
+    printf("[ActuatorV3] 硬件初始化完成:\r\n");
+    printf("  电磁阀: PE2, PE3\r\n");
+    printf("  加热器: PE4, PE5, PE6\r\n");
+    printf("  调速泵PWM: PF9(TIM14), PF10(TIM1)\r\n");
+    printf("  直流泵: PF6, PF7\r\n");
+}
+
+/**
  * @brief 处理命令队列中的命令
  */
 static void Actuator_ProcessCommands(void)
@@ -1061,34 +1206,47 @@ static void Actuator_SendStatus(void)
  */
 static BaseType_t Actuator_SetDigitalOutput(uint8_t channel, bool state)
 {
-    // TODO: 实现实际的硬件输出接口
-    // 这里应该调用HAL层的GPIO输出函数
+    GPIO_TypeDef* gpio_port = NULL;
+    uint16_t gpio_pin = 0;
 
-    // 示例代码 - 需要根据实际硬件配置修改
-    /*
-    GPIO_TypeDef* gpio_port;
-    uint16_t gpio_pin;
-
-    // 根据通道号选择GPIO端口和引脚
+    // 根据通道号选择对应的GPIO端口和引脚
     switch (channel) {
         case ACTUATOR_VALVE_1:
-            gpio_port = GPIOA;
-            gpio_pin = GPIO_PIN_0;
+            gpio_port = VALVE_1_PORT;
+            gpio_pin = VALVE_1_PIN;
             break;
         case ACTUATOR_VALVE_2:
-            gpio_port = GPIOA;
-            gpio_pin = GPIO_PIN_1;
+            gpio_port = VALVE_2_PORT;
+            gpio_pin = VALVE_2_PIN;
             break;
-        // ... 其他通道
+        case ACTUATOR_HEATER_1:
+            gpio_port = HEATER_1_PORT;
+            gpio_pin = HEATER_1_PIN;
+            break;
+        case ACTUATOR_HEATER_2:
+            gpio_port = HEATER_2_PORT;
+            gpio_pin = HEATER_2_PIN;
+            break;
+        case ACTUATOR_HEATER_3:
+            gpio_port = HEATER_3_PORT;
+            gpio_pin = HEATER_3_PIN;
+            break;
+        case ACTUATOR_PUMP_DC_1:
+            gpio_port = PUMP_DC_1_PORT;
+            gpio_pin = PUMP_DC_1_PIN;
+            break;
+        case ACTUATOR_PUMP_DC_2:
+            gpio_port = PUMP_DC_2_PORT;
+            gpio_pin = PUMP_DC_2_PIN;
+            break;
         default:
+            printf("[ActuatorV3] ERROR: 无效的数字输出通道 %d\r\n", channel);
             return pdFALSE;
     }
 
-    // 设置GPIO输出
+    // 设置GPIO输出状态
     HAL_GPIO_WritePin(gpio_port, gpio_pin, state ? GPIO_PIN_SET : GPIO_PIN_RESET);
-    */
 
-    // 目前返回成功，实际实现时需要根据硬件接口结果返回
     return pdTRUE;
 }
 
@@ -1100,29 +1258,25 @@ static BaseType_t Actuator_SetDigitalOutput(uint8_t channel, bool state)
  */
 static BaseType_t Actuator_SetPWMOutput(uint8_t channel, float duty_cycle)
 {
-    // TODO: 实现实际的PWM输出接口
-    // 这里应该调用HAL层的PWM设置函数
+    TIM_HandleTypeDef* htim = NULL;
+    uint32_t tim_channel = 0;
 
     // 限制占空比范围
     if (duty_cycle < 0.0f) duty_cycle = 0.0f;
     if (duty_cycle > 100.0f) duty_cycle = 100.0f;
 
-    // 示例代码 - 需要根据实际硬件配置修改
-    /*
-    TIM_HandleTypeDef* htim;
-    uint32_t tim_channel;
-
-    // 根据通道号选择定时器和通道
+    // 根据通道号选择对应的定时器和通道
     switch (channel) {
         case ACTUATOR_PUMP_SPEED_1:
-            htim = &htim3;
+            htim = &(TIM_HandleTypeDef){.Instance = TIM14};
             tim_channel = TIM_CHANNEL_1;
             break;
         case ACTUATOR_PUMP_SPEED_2:
-            htim = &htim3;
-            tim_channel = TIM_CHANNEL_2;
+            htim = &(TIM_HandleTypeDef){.Instance = TIM1};
+            tim_channel = TIM_CHANNEL_3;
             break;
         default:
+            printf("[ActuatorV3] ERROR: 无效的PWM通道 %d\r\n", channel);
             return pdFALSE;
     }
 
@@ -1132,9 +1286,7 @@ static BaseType_t Actuator_SetPWMOutput(uint8_t channel, float duty_cycle)
 
     // 设置PWM占空比
     __HAL_TIM_SET_COMPARE(htim, tim_channel, pulse);
-    */
 
-    // 目前返回成功，实际实现时需要根据硬件接口结果返回
     return pdTRUE;
 }
 
@@ -1357,6 +1509,17 @@ BaseType_t ActuatorTaskV3_SendMessage(const actuator_msg_t *msg, uint32_t timeou
     }
 
     return xQueueSend(xQueue_ActuatorMsg, msg, pdMS_TO_TICKS(timeout_ms));
+}
+
+/**
+ * @brief 初始化执行器GPIO和PWM硬件 (公共接口)
+ * @return pdTRUE=成功, pdFALSE=失败
+ */
+BaseType_t ActuatorTaskV3_InitializeHardware(void)
+{
+    Actuator_InitializeHardware();
+    printf("[ActuatorV3] 公共硬件初始化接口调用完成\r\n");
+    return pdTRUE;
 }
 
 /************************ (C) COPYRIGHT Ink Supply Control System *****END OF FILE****/

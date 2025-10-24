@@ -20,6 +20,7 @@
  */
 
 #include "sensor_task_v3.h"
+#include "ads8688/bsp_ads8688.h"
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
@@ -72,6 +73,8 @@ static uint8_t g_filter_count[SENSOR_COUNT] = {0};
 /* ========================================================================== */
 
 static void Sensor_InitializeConfigs(void);
+static void Sensor_InitializeHardware(void);
+static void Sensor_InitializeFloatSwitchGPIO(void);
 static void Sensor_ReadAllSensors(void);
 static void Sensor_ReadTemperatureSensors(void);
 static void Sensor_ReadPressureSensors(void);
@@ -113,6 +116,9 @@ BaseType_t SensorTaskV3_Init(void)
         printf("[SensorV3] ERROR: Failed to create event group\r\n");
         return pdFAIL;
     }
+
+    // 初始化硬件
+    Sensor_InitializeHardware();
 
     // 初始化传感器配置
     Sensor_InitializeConfigs();
@@ -224,12 +230,13 @@ void Task_SensorV3(void *pvParameters)
 
         // 6. 定期打印调试信息
         if ((g_sensor_context.cycle_count % 100) == 0) {
-            printf("[SensorV3] Cycle=%lu, Quality=%d%%, Temp1=%.1f°C, Press1=%.1fkPa, Level1=%.1fmm\r\n",
+            printf("[SensorV3] Cycle=%lu, Quality=%d%%, Temp1=%.1f°C, Press1=%.1fkPa, Float1=%.0f, AnalogLevel=%.1fmm\r\n",
                    g_sensor_context.cycle_count,
                    g_sensor_context.overall_quality,
                    g_sensor_context.temp_values[0],
                    g_sensor_context.pressure_values[0],
-                   g_sensor_context.level_values[0]);
+                   g_sensor_context.level_values[0],  // 浮球开关1
+                   g_sensor_context.level_values[3]); // 模拟液位
         }
 
         // 7. 按照固定周期执行
@@ -422,9 +429,8 @@ BaseType_t SensorTaskV3_GetPressures(float *pressure_array)
 }
 
 /**
- * @brief 获取液位传感器数组
- * @param level_array 液位数组指针 (至少4个元素)
- * @return pdTRUE=成功, pdFALSE=失败
+ * @brief 获取液位传感器数组 (包含浮球开关和模拟液位)
+ * @param level_array [0-2]: 浮球开关状态, [3]: 模拟液位值
  */
 BaseType_t SensorTaskV3_GetLevels(float *level_array)
 {
@@ -433,6 +439,7 @@ BaseType_t SensorTaskV3_GetLevels(float *level_array)
     }
 
     if (xSemaphoreTake(xMutex_SensorContext, pdMS_TO_TICKS(10)) == pdTRUE) {
+        // 返回4个液位值：前3个浮球开关状态，第4个模拟液位
         memcpy(level_array, g_sensor_context.level_values, sizeof(float) * 4);
         xSemaphoreGive(xMutex_SensorContext);
         return pdTRUE;
@@ -482,9 +489,9 @@ uint8_t SensorTaskV3_CheckHealth(void)
  */
 static void Sensor_InitializeConfigs(void)
 {
-    // 温度传感器配置 (FTT518 Pt100)
-    for (uint8_t i = SENSOR_TEMP_1; i <= SENSOR_TEMP_2; i++) {
-        g_sensor_configs[i].channel = i;
+    // 温度传感器配置 (FTT518 Pt100) - 使用ADS8688 CH0-2
+    for (uint8_t i = SENSOR_TEMP_1; i <= SENSOR_TEMP_3; i++) {
+        g_sensor_configs[i].channel = i - SENSOR_TEMP_1; // ADS8688 CH0-2
         g_sensor_configs[i].scale_factor = 0.1f;      // 0.1°C per unit
         g_sensor_configs[i].offset = 0.0f;
         g_sensor_configs[i].filter_coefficient = 0.8f;
@@ -492,9 +499,9 @@ static void Sensor_InitializeConfigs(void)
         g_sensor_configs[i].enabled = true;
     }
 
-    // 压力传感器配置 (HP10MY)
+    // 压力传感器配置 (HP10MY) - 使用ADS8688 CH3-6
     for (uint8_t i = SENSOR_PRESSURE_1; i <= SENSOR_PRESSURE_4; i++) {
-        g_sensor_configs[i].channel = i;
+        g_sensor_configs[i].channel = (i - SENSOR_PRESSURE_1) + 3; // ADS8688 CH3-6
         g_sensor_configs[i].scale_factor = 0.01f;     // 0.01kPa per unit
         g_sensor_configs[i].offset = 0.0f;
         g_sensor_configs[i].filter_coefficient = 0.7f;
@@ -502,15 +509,23 @@ static void Sensor_InitializeConfigs(void)
         g_sensor_configs[i].enabled = true;
     }
 
-    // 液位传感器配置 (FRD-8061)
-    for (uint8_t i = SENSOR_LEVEL_1; i <= SENSOR_LEVEL_ANALOG; i++) {
+    // 浮球液位开关配置 (开关量)
+    for (uint8_t i = SENSOR_LEVEL_FLOAT_1; i <= SENSOR_LEVEL_FLOAT_3; i++) {
         g_sensor_configs[i].channel = i;
-        g_sensor_configs[i].scale_factor = 0.1f;      // 0.1mm per unit
+        g_sensor_configs[i].scale_factor = 1.0f;      // 开关量不需要缩放
         g_sensor_configs[i].offset = 0.0f;
-        g_sensor_configs[i].filter_coefficient = 0.9f;
-        g_sensor_configs[i].sample_count = 8;
+        g_sensor_configs[i].filter_coefficient = 1.0f; // 开关量不需要滤波
+        g_sensor_configs[i].sample_count = 1;
         g_sensor_configs[i].enabled = true;
     }
+
+    // 模拟液位传感器配置 (FRD-8061) - 使用ADS8688 CH7
+    g_sensor_configs[SENSOR_LEVEL_ANALOG].channel = 7; // ADS8688 CH7
+    g_sensor_configs[SENSOR_LEVEL_ANALOG].scale_factor = 1.0f;      // 1mm per unit
+    g_sensor_configs[SENSOR_LEVEL_ANALOG].offset = 0.0f;
+    g_sensor_configs[SENSOR_LEVEL_ANALOG].filter_coefficient = 0.9f;
+    g_sensor_configs[SENSOR_LEVEL_ANALOG].sample_count = 8;
+    g_sensor_configs[SENSOR_LEVEL_ANALOG].enabled = true;
 
     // 流量传感器配置 (I2C)
     g_sensor_configs[SENSOR_FLOW].channel = 0x40;    // I2C地址
@@ -520,7 +535,11 @@ static void Sensor_InitializeConfigs(void)
     g_sensor_configs[SENSOR_FLOW].sample_count = 5;
     g_sensor_configs[SENSOR_FLOW].enabled = true;
 
-    printf("[SensorV3] Sensor configurations initialized\r\n");
+    printf("[SensorV3] Sensor configurations initialized (Total: %d sensors)\r\n", SENSOR_COUNT);
+    printf("[SensorV3] ADS8688 Channel Mapping:\r\n");
+    printf("  CH0-2: Temperature sensors\r\n");
+    printf("  CH3-6: Pressure sensors\r\n");
+    printf("  CH7:   Analog level sensor\r\n");
 }
 
 /**
@@ -534,7 +553,7 @@ static void Sensor_ReadAllSensors(void)
     // 读取压力传感器
     Sensor_ReadPressureSensors();
 
-    // 读取液位传感器
+    // 读取液位传感器 (包括浮球开关和模拟量)
     Sensor_ReadLevelSensors();
 
     // 读取流量传感器
@@ -546,118 +565,216 @@ static void Sensor_ReadAllSensors(void)
 }
 
 /**
- * @brief 读取温度传感器 (FTT518 Pt100)
+ * @brief 读取温度传感器 (FTT518 Pt100) - 通过ADS8688 CH0-2
  */
 static void Sensor_ReadTemperatureSensors(void)
 {
-    for (uint8_t i = SENSOR_TEMP_1; i <= SENSOR_TEMP_3; i++) {
-        if (!g_sensor_configs[i].enabled) {
-            continue;
+    uint16_t raw_adc_data[8] = {0};
+    float voltage_data[8] = {0.0f};
+
+    // 读取ADS8688所有8个通道
+    HAL_StatusTypeDef status = BSP_ADS8688_ReadAllChannels(raw_adc_data);
+
+    if (status == HAL_OK) {
+        // 转换为电压值
+        BSP_ADS8688_ConvertToVoltage(raw_adc_data, voltage_data, 8);
+
+        // 处理温度传感器 (ADS8688 CH0-2)
+        for (uint8_t i = SENSOR_TEMP_1; i <= SENSOR_TEMP_3; i++) {
+            if (!g_sensor_configs[i].enabled) {
+                continue;
+            }
+
+            uint8_t adc_channel = g_sensor_configs[i].channel; // CH0-2
+
+            // 将电压值转换为温度值 (根据FTT518 Pt100特性)
+            // 假设: 0-5V对应-50°C到+150°C 的线性关系
+            float raw_temp = (voltage_data[adc_channel] * 40.0f) - 50.0f; // (V*200°C/5V) - 50°C
+
+            // 应用滤波
+            float filtered_value = Sensor_ApplyFilter(i, raw_temp);
+
+            // 应用标定
+            float calibrated_value = Sensor_ApplyCalibration(i, filtered_value);
+
+            // 计算质量
+            uint8_t quality = Sensor_CalculateQuality(i);
+
+            // 更新传感器数据
+            g_sensor_context.sensors[i].raw_value = raw_temp;
+            g_sensor_context.sensors[i].filtered_value = filtered_value;
+            g_sensor_context.sensors[i].calibrated_value = calibrated_value;
+            g_sensor_context.sensors[i].timestamp = HAL_GetTick();
+            g_sensor_context.sensors[i].valid = true;
+            g_sensor_context.sensors[i].quality = quality;
+
+            // 更新分类数据
+            g_sensor_context.temp_values[i - SENSOR_TEMP_1] = calibrated_value;
+
+            g_sensor_stats.total_samples++;
         }
-
-        // TODO: 调用驱动层接口读取实际硬件数据
-        // 这里使用模拟数据作为示例
-        float raw_value = 20.0f + (i * 5.0f) + (sinf(HAL_GetTick() / 1000.0f) * 2.0f);
-
-        // 应用滤波
-        float filtered_value = Sensor_ApplyFilter(i, raw_value);
-
-        // 应用标定
-        float calibrated_value = Sensor_ApplyCalibration(i, filtered_value);
-
-        // 计算质量
-        uint8_t quality = Sensor_CalculateQuality(i);
-
-        // 更新传感器数据
-        g_sensor_context.sensors[i].raw_value = raw_value;
-        g_sensor_context.sensors[i].filtered_value = filtered_value;
-        g_sensor_context.sensors[i].calibrated_value = calibrated_value;
-        g_sensor_context.sensors[i].timestamp = HAL_GetTick();
-        g_sensor_context.sensors[i].valid = true;
-        g_sensor_context.sensors[i].quality = quality;
-
-        // 更新分类数据
-        g_sensor_context.temp_values[i - SENSOR_TEMP_1] = calibrated_value;
-
-        g_sensor_stats.total_samples++;
+    } else {
+        // ADS8688读取失败，标记温度传感器为无效
+        for (uint8_t i = SENSOR_TEMP_1; i <= SENSOR_TEMP_3; i++) {
+            g_sensor_context.sensors[i].valid = false;
+            g_sensor_context.sensors[i].quality = 0;
+            g_sensor_context.temp_values[i - SENSOR_TEMP_1] = 0.0f;
+        }
+        g_sensor_stats.data_errors++;
     }
 }
 
 /**
- * @brief 读取压力传感器 (HP10MY)
+ * @brief 读取压力传感器 (HP10MY) - 通过ADS8688 CH3-6
  */
 static void Sensor_ReadPressureSensors(void)
 {
-    for (uint8_t i = SENSOR_PRESSURE_1; i <= SENSOR_PRESSURE_4; i++) {
-        if (!g_sensor_configs[i].enabled) {
-            continue;
+    uint16_t raw_adc_data[8] = {0};
+    float voltage_data[8] = {0.0f};
+
+    // 读取ADS8688所有8个通道
+    HAL_StatusTypeDef status = BSP_ADS8688_ReadAllChannels(raw_adc_data);
+
+    if (status == HAL_OK) {
+        // 转换为电压值
+        BSP_ADS8688_ConvertToVoltage(raw_adc_data, voltage_data, 8);
+
+        // 处理压力传感器 (ADS8688 CH3-6)
+        for (uint8_t i = SENSOR_PRESSURE_1; i <= SENSOR_PRESSURE_4; i++) {
+            if (!g_sensor_configs[i].enabled) {
+                continue;
+            }
+
+            uint8_t adc_channel = g_sensor_configs[i].channel; // CH3-6
+
+            // 将电压值转换为压力值 (根据HP10MY特性)
+            // 假设: 0-10V对应0-1000kPa 的线性关系
+            float raw_pressure = voltage_data[adc_channel] * 100.0f; // V * 1000kPa/10V = V * 100
+
+            // 应用滤波
+            float filtered_value = Sensor_ApplyFilter(i, raw_pressure);
+
+            // 应用标定
+            float calibrated_value = Sensor_ApplyCalibration(i, filtered_value);
+
+            // 计算质量
+            uint8_t quality = Sensor_CalculateQuality(i);
+
+            // 更新传感器数据
+            g_sensor_context.sensors[i].raw_value = raw_pressure;
+            g_sensor_context.sensors[i].filtered_value = filtered_value;
+            g_sensor_context.sensors[i].calibrated_value = calibrated_value;
+            g_sensor_context.sensors[i].timestamp = HAL_GetTick();
+            g_sensor_context.sensors[i].valid = true;
+            g_sensor_context.sensors[i].quality = quality;
+
+            // 更新分类数据
+            g_sensor_context.pressure_values[i - SENSOR_PRESSURE_1] = calibrated_value;
+
+            g_sensor_stats.total_samples++;
         }
-
-        // TODO: 调用驱动层接口读取实际硬件数据
-        // 这里使用模拟数据作为示例
-        float raw_value = 100.0f + ((i - SENSOR_PRESSURE_1) * 10.0f) +
-                          (sinf(HAL_GetTick() / 500.0f) * 5.0f);
-
-        // 应用滤波
-        float filtered_value = Sensor_ApplyFilter(i, raw_value);
-
-        // 应用标定
-        float calibrated_value = Sensor_ApplyCalibration(i, filtered_value);
-
-        // 计算质量
-        uint8_t quality = Sensor_CalculateQuality(i);
-
-        // 更新传感器数据
-        g_sensor_context.sensors[i].raw_value = raw_value;
-        g_sensor_context.sensors[i].filtered_value = filtered_value;
-        g_sensor_context.sensors[i].calibrated_value = calibrated_value;
-        g_sensor_context.sensors[i].timestamp = HAL_GetTick();
-        g_sensor_context.sensors[i].valid = true;
-        g_sensor_context.sensors[i].quality = quality;
-
-        // 更新分类数据
-        g_sensor_context.pressure_values[i - SENSOR_PRESSURE_1] = calibrated_value;
-
-        g_sensor_stats.total_samples++;
+    } else {
+        // ADS8688读取失败，标记压力传感器为无效
+        for (uint8_t i = SENSOR_PRESSURE_1; i <= SENSOR_PRESSURE_4; i++) {
+            g_sensor_context.sensors[i].valid = false;
+            g_sensor_context.sensors[i].quality = 0;
+            g_sensor_context.pressure_values[i - SENSOR_PRESSURE_1] = 0.0f;
+        }
+        g_sensor_stats.data_errors++;
     }
 }
 
 /**
- * @brief 读取液位传感器 (FRD-8061)
+ * @brief 读取液位传感器 (浮球开关GPIO + 模拟液位ADS8688 CH7)
  */
 static void Sensor_ReadLevelSensors(void)
 {
-    for (uint8_t i = SENSOR_LEVEL_1; i <= SENSOR_LEVEL_ANALOG; i++) {
+    // 1. 读取浮球液位开关 (GPIO)
+    for (uint8_t i = SENSOR_LEVEL_FLOAT_1; i <= SENSOR_LEVEL_FLOAT_3; i++) {
         if (!g_sensor_configs[i].enabled) {
             continue;
         }
 
-        // TODO: 调用驱动层接口读取实际硬件数据
-        // 这里使用模拟数据作为示例
-        float raw_value = 50.0f + ((i - SENSOR_LEVEL_1) * 20.0f) +
-                          (sinf(HAL_GetTick() / 2000.0f) * 10.0f);
+        GPIO_PinState switch_state;
 
-        // 应用滤波
-        float filtered_value = Sensor_ApplyFilter(i, raw_value);
+        // 根据传感器类型选择对应的GPIO引脚
+        switch (i) {
+            case SENSOR_LEVEL_FLOAT_1:
+                switch_state = HAL_GPIO_ReadPin(FLOAT_SWITCH_1_PORT, FLOAT_SWITCH_1_PIN);
+                break;
+            case SENSOR_LEVEL_FLOAT_2:
+                switch_state = HAL_GPIO_ReadPin(FLOAT_SWITCH_2_PORT, FLOAT_SWITCH_2_PIN);
+                break;
+            case SENSOR_LEVEL_FLOAT_3:
+                switch_state = HAL_GPIO_ReadPin(FLOAT_SWITCH_3_PORT, FLOAT_SWITCH_3_PIN);
+                break;
+            default:
+                switch_state = GPIO_PIN_RESET;
+                break;
+        }
 
-        // 应用标定
-        float calibrated_value = Sensor_ApplyCalibration(i, filtered_value);
+        float switch_value = (switch_state == GPIO_PIN_SET) ? 1.0f : 0.0f;
 
-        // 计算质量
-        uint8_t quality = Sensor_CalculateQuality(i);
-
-        // 更新传感器数据
-        g_sensor_context.sensors[i].raw_value = raw_value;
-        g_sensor_context.sensors[i].filtered_value = filtered_value;
-        g_sensor_context.sensors[i].calibrated_value = calibrated_value;
+        // 更新传感器数据结构
+        g_sensor_context.sensors[i].raw_value = switch_value;
+        g_sensor_context.sensors[i].filtered_value = switch_value;
+        g_sensor_context.sensors[i].calibrated_value = switch_value;
         g_sensor_context.sensors[i].timestamp = HAL_GetTick();
         g_sensor_context.sensors[i].valid = true;
-        g_sensor_context.sensors[i].quality = quality;
+        g_sensor_context.sensors[i].quality = 100; // 开关量质量固定为100%
 
-        // 更新分类数据
-        g_sensor_context.level_values[i - SENSOR_LEVEL_1] = calibrated_value;
+        // 更新分类数据 (level_values[0-2])
+        g_sensor_context.level_values[i - SENSOR_LEVEL_FLOAT_1] = switch_value;
 
         g_sensor_stats.total_samples++;
+    }
+
+    // 2. 读取模拟液位传感器 (ADS8688 CH7)
+    if (g_sensor_configs[SENSOR_LEVEL_ANALOG].enabled) {
+        uint16_t raw_adc_data[8] = {0};
+        float voltage_data[8] = {0.0f};
+
+        // 读取ADS8688所有8个通道
+        HAL_StatusTypeDef status = BSP_ADS8688_ReadAllChannels(raw_adc_data);
+
+        if (status == HAL_OK) {
+            // 转换为电压值
+            BSP_ADS8688_ConvertToVoltage(raw_adc_data, voltage_data, 8);
+
+            uint8_t adc_channel = g_sensor_configs[SENSOR_LEVEL_ANALOG].channel; // CH7
+
+            // 将电压值转换为液位值 (根据FRD-8061传感器特性)
+            // 假设: 0-5V对应0-100mm液位
+            float raw_level = voltage_data[adc_channel] * 20.0f; // 5V/100mm = 0.05V/mm => mm = V/0.05 = V*20
+
+            // 应用滤波
+            float filtered_value = Sensor_ApplyFilter(SENSOR_LEVEL_ANALOG, raw_level);
+
+            // 应用标定
+            float calibrated_value = Sensor_ApplyCalibration(SENSOR_LEVEL_ANALOG, filtered_value);
+
+            // 计算质量
+            uint8_t quality = Sensor_CalculateQuality(SENSOR_LEVEL_ANALOG);
+
+            // 更新传感器数据
+            g_sensor_context.sensors[SENSOR_LEVEL_ANALOG].raw_value = raw_level;
+            g_sensor_context.sensors[SENSOR_LEVEL_ANALOG].filtered_value = filtered_value;
+            g_sensor_context.sensors[SENSOR_LEVEL_ANALOG].calibrated_value = calibrated_value;
+            g_sensor_context.sensors[SENSOR_LEVEL_ANALOG].timestamp = HAL_GetTick();
+            g_sensor_context.sensors[SENSOR_LEVEL_ANALOG].valid = true;
+            g_sensor_context.sensors[SENSOR_LEVEL_ANALOG].quality = quality;
+
+            // 更新分类数据 (level_values[3])
+            g_sensor_context.level_values[3] = calibrated_value;
+
+            g_sensor_stats.total_samples++;
+        } else {
+            // ADS8688读取失败，标记模拟液位传感器为无效
+            g_sensor_context.sensors[SENSOR_LEVEL_ANALOG].valid = false;
+            g_sensor_context.sensors[SENSOR_LEVEL_ANALOG].quality = 0;
+            g_sensor_context.level_values[3] = 0.0f;
+            g_sensor_stats.data_errors++;
+        }
     }
 }
 
@@ -810,6 +927,95 @@ static void Sensor_CheckSystemHealth(void)
         xEventGroupSetBits(xEventGroup_Sensor, EVENT_SENSOR_ERROR);
         g_sensor_stats.data_errors++;
     }
+}
+
+/* ========================================================================== */
+/* 新增的私有函数实现 */
+/* ========================================================================== */
+
+/**
+ * @brief 初始化硬件(ADS8688和GPIO)
+ */
+static void Sensor_InitializeHardware(void)
+{
+    // 初始化浮球液位开关GPIO
+    Sensor_InitializeFloatSwitchGPIO();
+
+    // 初始化ADS8688 ADC
+    BSP_ADS8688_Init();
+
+    printf("[SensorV3] Hardware initialization completed\r\n");
+}
+
+/**
+ * @brief 初始化浮球液位开关GPIO
+ */
+static void Sensor_InitializeFloatSwitchGPIO(void)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    // 使能GPIO时钟
+    FLOAT_SWITCH_1_CLK_ENABLE();
+    FLOAT_SWITCH_2_CLK_ENABLE();
+    FLOAT_SWITCH_3_CLK_ENABLE();
+
+    // 配置浮球液位开关1 (PG9)
+    GPIO_InitStruct.Pin = FLOAT_SWITCH_1_PIN;
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(FLOAT_SWITCH_1_PORT, &GPIO_InitStruct);
+
+    // 配置浮球液位开关2 (PG12)
+    GPIO_InitStruct.Pin = FLOAT_SWITCH_2_PIN;
+    HAL_GPIO_Init(FLOAT_SWITCH_2_PORT, &GPIO_InitStruct);
+
+    // 配置浮球液位开关3 (PG15)
+    GPIO_InitStruct.Pin = FLOAT_SWITCH_3_PIN;
+    HAL_GPIO_Init(FLOAT_SWITCH_3_PORT, &GPIO_InitStruct);
+
+    printf("[SensorV3] Float switch GPIO initialized\r\n");
+}
+
+/* ========================================================================== */
+/* 新增的公共函数实现 */
+/* ========================================================================== */
+
+/**
+ * @brief 获取浮球液位开关状态
+ */
+BaseType_t SensorTaskV3_GetFloatSwitchStates(bool *switch_states)
+{
+    if (switch_states == NULL) {
+        return pdFALSE;
+    }
+
+    if (xSemaphoreTake(xMutex_SensorContext, pdMS_TO_TICKS(10)) == pdTRUE) {
+        // 从level_values[0-2]获取浮球开关状态，转换float为bool
+        for (uint8_t i = 0; i < 3; i++) {
+            switch_states[i] = (g_sensor_context.level_values[i] > 0.5f);
+        }
+        xSemaphoreGive(xMutex_SensorContext);
+        return pdTRUE;
+    }
+
+    return pdFALSE;
+}
+
+/**
+ * @brief 获取模拟液位值
+ */
+float SensorTaskV3_GetAnalogLevel(void)
+{
+    float level_value = 0.0f;
+
+    if (xSemaphoreTake(xMutex_SensorContext, pdMS_TO_TICKS(10)) == pdTRUE) {
+        // 从level_values[3]获取模拟液位值
+        level_value = g_sensor_context.level_values[3];
+        xSemaphoreGive(xMutex_SensorContext);
+    }
+
+    return level_value;
 }
 
 /************************ (C) COPYRIGHT Ink Supply Control System *****END OF FILE****/

@@ -17,7 +17,9 @@
  * 传感器任务负责:
  * 1. 采集温度传感器数据 (FTT518 Pt100 x3)
  * 2. 采集压力传感器数据 (HP10MY x4)
- * 3. 采集液位传感器数据 (FRD-8061 x3 + 模拟液位 x1)
+ * 3. 采集液位传感器数据:
+ *    - 浮球液位开关 (开关量) x3: PG9, PG12, PG15
+ *    - 模拟量液位 (FRD-8061) x8: 通过ADS8688 ADC
  * 4. 采集流量传感器数据 (I2C接口 x1)
  * 5. 数据滤波和质量检查
  * 6. 通过消息队列向控制任务和通信任务发送数据
@@ -33,12 +35,32 @@
 #include "queue.h"
 #include "semphr.h"
 #include "event_groups.h"
+#include "ads8688/bsp_ads8688.h"
 #include <stdint.h>
 #include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ========================================================================== */
+/* 浮球液位开关GPIO定义 (参考设计文档V3) */
+/* ========================================================================== */
+
+// 浮球液位开关1 - PG9
+#define FLOAT_SWITCH_1_CLK_ENABLE()    __HAL_RCC_GPIOG_CLK_ENABLE()
+#define FLOAT_SWITCH_1_PORT            GPIOG
+#define FLOAT_SWITCH_1_PIN             GPIO_PIN_9
+
+// 浮球液位开关2 - PG12
+#define FLOAT_SWITCH_2_CLK_ENABLE()    __HAL_RCC_GPIOG_CLK_ENABLE()
+#define FLOAT_SWITCH_2_PORT            GPIOG
+#define FLOAT_SWITCH_2_PIN             GPIO_PIN_12
+
+// 浮球液位开关3 - PG15
+#define FLOAT_SWITCH_3_CLK_ENABLE()    __HAL_RCC_GPIOG_CLK_ENABLE()
+#define FLOAT_SWITCH_3_PORT            GPIOG
+#define FLOAT_SWITCH_3_PIN             GPIO_PIN_15
 
 /* ========================================================================== */
 /* 任务配置参数 (参考设计文档V3 第2.1.1节) */
@@ -54,17 +76,17 @@ extern "C" {
 
 // 传感器类型枚举
 typedef enum {
-    SENSOR_TEMP_1       = 0,    // 温度传感器1 (FTT518 Pt100)
-    SENSOR_TEMP_2       = 1,    // 温度传感器2
-    SENSOR_TEMP_3       = 2,    // 温度传感器3
-    SENSOR_PRESSURE_1   = 3,    // 压力传感器1 (HP10MY)
-    SENSOR_PRESSURE_2   = 4,    // 压力传感器2
-    SENSOR_PRESSURE_3   = 5,    // 压力传感器3
-    SENSOR_PRESSURE_4   = 6,    // 压力传感器4
-    SENSOR_LEVEL_1      = 7,    // 液位传感器1 (FRD-8061)
-    SENSOR_LEVEL_2      = 8,    // 液位传感器2
-    SENSOR_LEVEL_3      = 9,    // 液位传感器3
-    SENSOR_LEVEL_ANALOG = 10,   // 模拟量液位
+    SENSOR_TEMP_1       = 0,    // 温度传感器1 (FTT518 Pt100) - ADS8688 CH0
+    SENSOR_TEMP_2       = 1,    // 温度传感器2 - ADS8688 CH1
+    SENSOR_TEMP_3       = 2,    // 温度传感器3 - ADS8688 CH2
+    SENSOR_PRESSURE_1   = 3,    // 压力传感器1 (HP10MY) - ADS8688 CH3
+    SENSOR_PRESSURE_2   = 4,    // 压力传感器2 - ADS8688 CH4
+    SENSOR_PRESSURE_3   = 5,    // 压力传感器3 - ADS8688 CH5
+    SENSOR_PRESSURE_4   = 6,    // 压力传感器4 - ADS8688 CH6
+    SENSOR_LEVEL_FLOAT_1 = 7,   // 浮球液位开关1 (PG9, 开关量)
+    SENSOR_LEVEL_FLOAT_2 = 8,   // 浮球液位开关2 (PG12, 开关量)
+    SENSOR_LEVEL_FLOAT_3 = 9,   // 浮球液位开关3 (PG15, 开关量)
+    SENSOR_LEVEL_ANALOG = 10,   // 模拟液位 (FRD-8061) - ADS8688 CH7
     SENSOR_FLOW         = 11,   // 流量传感器(I2C)
     SENSOR_COUNT        = 12    // 传感器总数
 } sensor_type_t;
@@ -105,9 +127,9 @@ typedef struct {
     sensor_data_t sensors[SENSOR_COUNT];
 
     // 分类数据 (便于访问)
-    float temp_values[3];         // 温度值 (°C)
-    float pressure_values[4];     // 压力值 (kPa)
-    float level_values[4];        // 液位值 (mm)
+    float temp_values[3];         // 温度值 (°C) - 来自ADS8688 CH0-2
+    float pressure_values[4];     // 压力值 (kPa) - 来自ADS8688 CH3-6
+    float level_values[4];        // 液位值: [0-2]=浮球开关状态(0/1), [3]=模拟液位(mm, ADS8688 CH7)
     float flow_value;             // 流量值 (L/min)
 
     // 整体状态
@@ -272,9 +294,24 @@ BaseType_t SensorTaskV3_GetPressures(float *pressure_array);
 /**
  * @brief 获取液位传感器数组
  * @param level_array 液位数组指针 (至少4个元素)
+ *                    [0-2]: 浮球开关状态 (0=低电平, 1=高电平)
+ *                    [3]: 模拟液位值 (mm)
  * @return pdTRUE=成功, pdFALSE=失败
  */
 BaseType_t SensorTaskV3_GetLevels(float *level_array);
+
+/**
+ * @brief 获取浮球液位开关状态
+ * @param switch_states 开关状态数组指针 (至少3个元素, true=高电平)
+ * @return pdTRUE=成功, pdFALSE=失败
+ */
+BaseType_t SensorTaskV3_GetFloatSwitchStates(bool *switch_states);
+
+/**
+ * @brief 获取模拟液位值
+ * @return 模拟液位值 (mm)
+ */
+float SensorTaskV3_GetAnalogLevel(void);
 
 /**
  * @brief 获取流量值

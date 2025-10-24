@@ -49,6 +49,54 @@ extern "C" {
 #define ACTUATOR_TASK_PERIOD_MS         10      // 任务周期 10ms (参考V3表格)
 
 /* ========================================================================== */
+/* 执行器GPIO管脚定义 (参考设计文档V3 第2.3.1节) */
+/* ========================================================================== */
+
+// 电磁阀GPIO定义
+#define VALVE_1_CLK_ENABLE()      __HAL_RCC_GPIOE_CLK_ENABLE()
+#define VALVE_1_PORT              GPIOE
+#define VALVE_1_PIN               GPIO_PIN_2
+
+#define VALVE_2_CLK_ENABLE()      __HAL_RCC_GPIOE_CLK_ENABLE()
+#define VALVE_2_PORT              GPIOE
+#define VALVE_2_PIN               GPIO_PIN_3
+
+// 加热器GPIO定义
+#define HEATER_1_CLK_ENABLE()     __HAL_RCC_GPIOE_CLK_ENABLE()
+#define HEATER_1_PORT             GPIOE
+#define HEATER_1_PIN              GPIO_PIN_4
+
+#define HEATER_2_CLK_ENABLE()     __HAL_RCC_GPIOE_CLK_ENABLE()
+#define HEATER_2_PORT             GPIOE
+#define HEATER_2_PIN              GPIO_PIN_5
+
+#define HEATER_3_CLK_ENABLE()     __HAL_RCC_GPIOE_CLK_ENABLE()
+#define HEATER_3_PORT             GPIOE
+#define HEATER_3_PIN              GPIO_PIN_6
+
+// 调速泵PWM定义 (定时器配置)
+#define PUMP_SPEED_1_CLK_ENABLE() __HAL_RCC_GPIOF_CLK_ENABLE()
+#define PUMP_SPEED_1_PORT         GPIOF
+#define PUMP_SPEED_1_PIN          GPIO_PIN_9
+#define PUMP_SPEED_1_TIM          TIM14
+#define PUMP_SPEED_1_TIM_CHANNEL  TIM_CHANNEL_1
+
+#define PUMP_SPEED_2_CLK_ENABLE() __HAL_RCC_GPIOF_CLK_ENABLE()
+#define PUMP_SPEED_2_PORT         GPIOF
+#define PUMP_SPEED_2_PIN          GPIO_PIN_10
+#define PUMP_SPEED_2_TIM          TIM1
+#define PUMP_SPEED_2_TIM_CHANNEL  TIM_CHANNEL_3
+
+// 直流泵GPIO定义
+#define PUMP_DC_1_CLK_ENABLE()    __HAL_RCC_GPIOF_CLK_ENABLE()
+#define PUMP_DC_1_PORT            GPIOF
+#define PUMP_DC_1_PIN             GPIO_PIN_6
+
+#define PUMP_DC_2_CLK_ENABLE()    __HAL_RCC_GPIOF_CLK_ENABLE()
+#define PUMP_DC_2_PORT            GPIOF
+#define PUMP_DC_2_PIN             GPIO_PIN_7
+
+/* ========================================================================== */
 /* 执行器类型定义 (参考设计文档V3 第2.3.1节) */
 /* ========================================================================== */
 
@@ -408,6 +456,12 @@ bool ActuatorTaskV3_IsEmergencyStopped(void);
  * @return 健康分数 (0-100)
  */
 uint8_t ActuatorTaskV3_CheckHealth(void);
+
+/**
+ * @brief 初始化执行器GPIO和PWM硬件
+ * @return pdTRUE=成功, pdFALSE=失败
+ */
+BaseType_t ActuatorTaskV3_InitializeHardware(void);
 
 #ifdef __cplusplus
 }
