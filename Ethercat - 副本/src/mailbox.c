@@ -1,3 +1,8 @@
+/*
+* This source file is part of the EtherCAT Slave Stack Code licensed by Beckhoff Automation GmbH & Co KG, 33415 Verl, Germany.
+* The corresponding license agreement applies. This hint shall not be removed.
+*/
+
 /**
 \addtogroup Mailbox Mailbox Functions
 @{
@@ -66,15 +71,21 @@ psRepeatMbx will be set to 0.<br>
 When the repeated mailbox service was sent (call of MBX_MailboxReadInd), psReadMbx will be stored in psRepeatMbx<br>
 and psStoreMbx will be sent (in MBX_CopyToSendMailbox) and stored in psReadMbx, psStoreMbx will be set to 0.
 
-\version 5.11
+\version 5.12
 
+<br>Changes to version V5.11:<br>
+V5.12 EOE5: free pending buffer in EoE_Init, EoE_Init is called on startup and PI transition<br>
+V5.12 MBX1: use only 16Bit variables to write the last byte of the mailbox buffer in case of ESC_16BIT_Access,update clear message queue in case of stop mailbox handler<br>
+V5.12 MBX2: do not set the pending indication in case of a EoE request, application triggered eoe datagram update<br>
+V5.12 MBX3: handle incomplete mailbox communication<br>
+V5.12 MBX4: in case of a disable mailbox queue and two consecutive foe uploads the mailbox receive handler is blocked<br>
 <br>Changes to version V5.10:<br>
 V5.11 ECAT10: change PROTO handling to prevent compiler errors<br>
 V5.11 ECAT7: add missing big endian swapping<br>
 V5.11 HW1: "move hardware independent functions ""HW_DisableSyncManChannel()"", ""HW_EnableSyncManChannel()"", ""HW_GetSyncMan()"", ""HW_ResetALEventMask()"", ""HW_SetALEventMask()"" to ecatalv.c"<br>
 V5.11 MBX2: "check in IP if enough dynamic memory is available to handle mailbox communication, if it is not the case the mbx error ""no memory"" is returned on any mbx request"<br>
 V5.11 MBX3: set application triggered emergency and EoE data to pending if no mailbox queue is supported and another mailbox request is currently handled, Handle only one mailbox request at a time (in case that MAILBPX_QUEUE is disabled)<br>
-V5.11 TEST4: add new mailbox test behaviour (the master mailbox cnt shall be incremented by 1 and the slave mailbox cnt is alternating)<br>
+V5.11 TEST4: add new mailbox test behavior (the master mailbox cnt shall be incremented by 1 and the slave mailbox cnt is alternating)<br>
 <br>Changes to version V5.01:<br>
 V5.10 EOE3: Change local send frame pending indication variable to a global variable (it need to be resetted if the mailbox is stopped and a frame is pending)<br>
 V5.10 ESC6: Update SyncManager register size (only for 8Bit ESC access)<br>
@@ -124,14 +135,17 @@ V4.07 ECAT 1: The sources for SPI and MCI were merged (in ecat_def.h<br>
 #include "ecatslv.h"
 
 
+
 #define    _MAILBOX_    1
 #include "mailbox.h"
 #undef _MAILBOX_
-/* ECATCHANGE_START(V5.11) ECAT10*/
 /*remove definition of _MAILBOX_ (#ifdef is used in mailbox.h)*/
-/* ECATCHANGE_END(V5.11) ECAT10*/
 
 #include "ecatcoe.h"
+/* ECATCHANGE_START(V5.12) MBX3*/
+#include "sdoserv.h"
+/* ECATCHANGE_END(V5.12) MBX3*/
+
 
 /*--------------------------------------------------------------------------------------
 ------
@@ -147,9 +161,8 @@ V4.07 ECAT 1: The sources for SPI and MCI were merged (in ecat_def.h<br>
 /*variables are declared in ecatslv.c*/
     extern VARVOLATILE UINT16    u16dummy;
 
-/* ECATCHANGE_START(V5.11) MBX2*/
     BOOL bNoMbxMemoryAvailable; /**< \brief Indicates if enough dynamic memory is available to handle at least one mailbox datagram */
-/* ECATCHANGE_END(V5.11) MBX2*/
+
 /*--------------------------------------------------------------------------------------
 ------
 ------    internal functions
@@ -213,6 +226,7 @@ TMBX MBXMEM * GetOutOfMbxQueue(TMBXQUEUE MBXMEM * pQueue)
         pMbx = pQueue->queue[firstInQueue];
         firstInQueue++;
         pQueue->firstInQueue = firstInQueue;
+        
         if (pQueue->firstInQueue == pQueue->maxQueueSize)
         {
             // Umbruch der Queue
@@ -220,7 +234,9 @@ TMBX MBXMEM * GetOutOfMbxQueue(TMBXQUEUE MBXMEM * pQueue)
         }
     }
     else
+    {
         pMbx = 0;
+    }
 
 
     LEAVE_MBX_CRITICAL;
@@ -235,6 +251,7 @@ TMBX MBXMEM * GetOutOfMbxQueue(TMBXQUEUE MBXMEM * pQueue)
 
 void MBX_Init(void)
 {
+    
     u16ReceiveMbxSize = MIN_MBX_SIZE;
     u16SendMbxSize = MAX_MBX_SIZE;
     u16EscAddrReceiveMbx = MIN_MBX_WRITE_ADDRESS;
@@ -282,19 +299,17 @@ void MBX_Init(void)
 UINT16 MBX_StartMailboxHandler(void)
 {
     UINT16 result = 0;
+    
     /* get address of the receive mailbox sync manager (SM0) */
-/*ECATCHANGE_START(V5.11) HW1*/
     TSYNCMAN ESCMEM * pSyncMan = (TSYNCMAN ESCMEM *)GetSyncMan(MAILBOX_WRITE);
-/*ECATCHANGE_END(V5.11) HW1*/
+
     /* store size of the receive mailbox */
     u16ReceiveMbxSize     = pSyncMan->Length;
     /* store the address of the receive mailbox */
     u16EscAddrReceiveMbx = pSyncMan->PhysicalStartAddress;
 
     /* get address of the send mailbox sync manager (SM1) */
-/*ECATCHANGE_START(V5.11) HW1*/
     pSyncMan =(TSYNCMAN ESCMEM *) GetSyncMan(MAILBOX_READ);
-/*ECATCHANGE_END(V5.11) HW1*/
 
     /* store the size of the send mailbox */
     u16SendMbxSize = pSyncMan->Length;
@@ -307,14 +322,12 @@ UINT16 MBX_StartMailboxHandler(void)
         return ALSTATUSCODE_INVALIDMBXCFGINPREOP;
     }
 
+
     /* enable the receive mailbox sync manager channel */
-/*ECATCHANGE_START(V5.11) HW1*/
     EnableSyncManChannel(MAILBOX_WRITE);
     /* enable the send mailbox sync manager channel */
     EnableSyncManChannel(MAILBOX_READ);
-/*ECATCHANGE_END(V5.11) HW1*/
 
-/* ECATCHANGE_START(V5.11) MBX2*/
         psWriteMbx = (TMBX MBXMEM *) APPL_AllocMailboxBuffer(u16ReceiveMbxSize);
         if(psWriteMbx == NULL)
         {
@@ -326,15 +339,16 @@ UINT16 MBX_StartMailboxHandler(void)
             {
                 result = ALSTATUSCODE_NOMEMORY;
             }
-           
+
             APPL_FreeMailboxBuffer(psWriteMbx);
+            psWriteMbx = NULL;
         }
         else
         {
             bNoMbxMemoryAvailable = FALSE;
             APPL_FreeMailboxBuffer(psWriteMbx);
+            psWriteMbx = NULL;
         }
-/* ECATCHANGE_END(V5.11) MBX2*/
 
     return result;
 }
@@ -355,24 +369,33 @@ void MBX_StopMailboxHandler(void)
     /* mailbox handler is stopped */
     bMbxRunning = FALSE;
     /* disable the receive mailbox sync manager channel */
-/*ECATCHANGE_START(V5.11) HW1*/
     DisableSyncManChannel(MAILBOX_WRITE);
     /* disable the send mailbox sync manager channel */
     DisableSyncManChannel(MAILBOX_READ);
-/*ECATCHANGE_END(V5.11) HW1*/
     /* initialize variables again */
 
 
     if (psRepeatMbx != NULL)
+    {
         APPL_FreeMailboxBuffer(psRepeatMbx);
+    }
 
     if (psStoreMbx != NULL && psStoreMbx != psRepeatMbx)
+    {
         APPL_FreeMailboxBuffer(psStoreMbx);
+    }
 
     if (psReadMbx != NULL && psReadMbx != psRepeatMbx && psReadMbx != psStoreMbx)
+    {
         APPL_FreeMailboxBuffer(psReadMbx);
+    }
 
 
+    //SODS_ClearPendingResponse();
+
+
+
+    psWriteMbx = NULL;
     psRepeatMbx = NULL;
     psReadMbx = NULL;
     psStoreMbx = NULL;
@@ -397,16 +420,19 @@ void MBX_StopMailboxHandler(void)
         if (pMbx)
         {
             APPL_FreeMailboxBuffer(pMbx);
-            pMbx = NULL;
+/*ECATCHANGE_START(V5.12) MBX1*/
+/*ECATCHANGE_END(V5.12) MBX1*/
         }
     } while (pMbx != NULL);
+    
     do
     {
         pMbx = GetOutOfMbxQueue(&sMbxSendQueue);
         if (pMbx)
         {
             APPL_FreeMailboxBuffer(pMbx);
-            pMbx = NULL;
+/*ECATCHANGE_START(V5.12) MBX1*/
+/*ECATCHANGE_END(V5.12) MBX1*/
         }
     } while (pMbx != NULL);
 
@@ -433,7 +459,6 @@ UINT8 MailboxServiceInd(TMBX MBXMEM *pMbx)
         break;
 
     default:
-
         result = MBXERR_UNSUPPORTEDPROTOCOL;
         break;
     }
@@ -495,11 +520,12 @@ void MBX_MailboxWriteInd(TMBX MBXMEM *pMbx)
             MBX_MailboxSendReq(pMbx, 0);
         }
     }
-    // the mailbox buffer has to be freed here
     else
     {
+        // the mailbox buffer has to be freed here
         APPL_FreeMailboxBuffer(pMbx);
         pMbx = NULL;
+
     }
 }
 
@@ -511,6 +537,7 @@ void MBX_MailboxWriteInd(TMBX MBXMEM *pMbx)
 void MBX_MailboxReadInd(void)
 {
     bSendMbxIsFull = FALSE;
+
     // HBu 02.05.06: the pointer psRepeatMbx is only free if there is no stored
     //               mailbox service from the last repeat
     if ( psRepeatMbx && psStoreMbx == NULL )
@@ -574,6 +601,7 @@ void MBX_MailboxRepeatReq(void)
     if (psRepeatMbx)
     {
         TMBX MBXMEM *pMbx = psRepeatMbx;
+        
         /* send mailbox service stored for repeat */
         /* HBu 13.10.06: if a repeat request is received (again) before the previously repeated mailbox telegram
            was read from the master (psStoreMbx != NULL) the next mailbox telegram to be sent is still in the
@@ -583,14 +611,12 @@ void MBX_MailboxRepeatReq(void)
        if (bSendMbxIsFull && psStoreMbx == NULL)
         {
             /* mailbox is full, take the buffer off */
-/*ECATCHANGE_START(V5.11) HW1*/
             DisableSyncManChannel(MAILBOX_READ);
 
             /* store the buffer to be sent next */
             psStoreMbx = psReadMbx;
             /* enable the mailbox again */
             EnableSyncManChannel(MAILBOX_READ);
-/*ECATCHANGE_END(V5.11) HW1*/
 
             /* HBu 15.02.06: flag has to be reset otherwise the mailbox service
                              will not be copied by MBX_CopyToSendMailbox */
@@ -639,11 +665,13 @@ UINT8 MBX_MailboxSendReq( TMBX MBXMEM * pMbx, UINT8 flags )
 
     /* HBu 06.02.06: in INIT-state a mailbox send request shall be refused */
     if ( (nAlStatus & STATE_MASK) == STATE_INIT )
+    {
         return ERROR_INVALIDSTATE;
+    }
 
+    
 
     ENTER_MBX_CRITICAL;
-    DISABLE_MBX_INT;
 
     /* the counter in the mailbox header has to be incremented with every new mailbox service to be sent
        if the mailbox data link layer is supported (software switch MAILBOX_REPEAT_SUPPORTED set)*/
@@ -652,7 +680,9 @@ UINT8 MBX_MailboxSendReq( TMBX MBXMEM * pMbx, UINT8 flags )
     /* u8MbxCounter holds the actual counter for the mailbox header, only the values
        1-7 are allowed if the mailbox data link layer is supported  */
     if ( (u8MbxReadCounter & 0x07) == 0 )
+    {
         u8MbxReadCounter = 1;
+    }
 
     pMbx->MbxHeader.Flags[MBX_OFFS_COUNTER] |= u8MbxReadCounter << MBX_SHIFT_COUNTER;
 
@@ -662,9 +692,13 @@ UINT8 MBX_MailboxSendReq( TMBX MBXMEM * pMbx, UINT8 flags )
         /* no success, send mailbox was full, set flag  */
         result = PutInMbxQueue(pMbx, &sMbxSendQueue);
         if (result != 0)
+        {
             flags |= FRAGMENTS_FOLLOW;
+        }
         else
+        {
             u8MbxReadCounter++;
+        }
     }
     /* HBu 13.02.06: Repeat-Counter was incremented too much if the mailbox service could not be sent */
     else
@@ -680,7 +714,6 @@ UINT8 MBX_MailboxSendReq( TMBX MBXMEM * pMbx, UINT8 flags )
         u8MailboxSendReqStored |= (flags & ((UINT8) ~FRAGMENTS_FOLLOW));
     }
 
-    ENABLE_MBX_INT;
     LEAVE_MBX_CRITICAL;
 
     return result;
@@ -703,7 +736,6 @@ void MBX_CheckAndCopyMailbox( void )
     /* the size has to be swapped here, all other bytes of the mailbox service will be swapped later */
     mbxLen = SWAPWORD(mbxLen);
 
-/* ECATCHANGE_START(V5.11) MBX2*/
     if(bNoMbxMemoryAvailable == TRUE)
     {
         /* Return a no memory error in case of any mailbox request*/
@@ -723,7 +755,6 @@ void MBX_CheckAndCopyMailbox( void )
             APPL_FreeMailboxBuffer(pMbx);
         }
     }
-/* ECATCHANGE_END(V5.11) MBX2*/
     /* the length of the mailbox data is in the first two bytes of the mailbox,
        so the length of the mailbox header has to be added */
     mbxLen += MBX_HEADER_SIZE;
@@ -753,7 +784,9 @@ void MBX_CheckAndCopyMailbox( void )
            the evaluation of the mailbox size will be done in the mailbox protocols called from MBX_WriteMailboxInd */
 
         if (mbxLen > u16ReceiveMbxSize)
+        {
             mbxLen = u16ReceiveMbxSize;
+        }
 
         psWriteMbx = (TMBX MBXMEM *) APPL_AllocMailboxBuffer(u16ReceiveMbxSize);
 
@@ -773,9 +806,7 @@ void MBX_CheckAndCopyMailbox( void )
         /*Read Control and Status of SyncManager 0 to check if the buffer is unlocked*/
         VARVOLATILE UINT16 smstate = 0x00;
         HW_EscReadWord(smstate,ESC_SYNCMAN_CONTROL_OFFSET);
-/*ECATCHANGE_START(V5.11) ECAT7*/
         smstate = SWAPWORD(smstate);
-/*ECATCHANGE_END(V5.11) ECAT7*/
 
         if(smstate & SM_STATUS_MBX_BUFFER_FULL)
         {
@@ -832,13 +863,11 @@ UINT8 MBX_CopyToSendMailbox( TMBX MBXMEM *pMbx )
         /*Read Control and Status of SyncManager 1 to check if the buffer is still marked as empty*/
         VARVOLATILE UINT16 smstate = 0x00;
         HW_EscReadWord(smstate,(ESC_SYNCMAN_CONTROL_OFFSET + SIZEOF_SM_REGISTER));
-/*ECATCHANGE_START(V5.11) ECAT7*/
         smstate = SWAPWORD(smstate);
-/*ECATCHANGE_END(V5.11) ECAT7*/
 
         if(!(smstate & SM_STATUS_MBX_BUFFER_FULL))
         {
-            UINT8 BytesLeft = u16SendMbxSize - (mbxSize + MBX_HEADER_SIZE);
+            UINT16 BytesLeft = u16SendMbxSize - (mbxSize + MBX_HEADER_SIZE);
 
             /*Write last Byte to trigger mailbox full flag*/
             /*Read last 2 Bytes and write them again (required if low Byte of the WORD were written before)*/
@@ -846,12 +875,14 @@ UINT8 MBX_CopyToSendMailbox( TMBX MBXMEM *pMbx )
             if(BytesLeft < 2)
             {
                 /*The last 2Bytes are overlapping the already written buffer*/
-                                
+
+/*ECATCHANGE_START(V5.12) MBX1*/                                
                 /*Get the valid 16Bit address*/
-                UINT32 LastDataAddress = ((mbxSize + MBX_HEADER_SIZE)/2)*2;
+                UINT32 LastDataAddress = ((mbxSize + MBX_HEADER_SIZE)/2);
             
                 /*Copy the buffer to overwrite*/
-                MEMCPY((UINT16 *)&u16dummy,(((UINT8 *)pMbx) + LastDataAddress),(2 - BytesLeft));
+                MEMCPY((UINT16 *)&u16dummy,(((UINT16 *)pMbx) + LastDataAddress),(2 - BytesLeft));
+/*ECATCHANGE_END(V5.12) MBX1*/                                
             }
             
             HW_EscWriteWord(u16dummy,(u16EscAddrSendMbx + u16SendMbxSize - 2));
@@ -866,11 +897,8 @@ UINT8 MBX_CopyToSendMailbox( TMBX MBXMEM *pMbx )
             the exception is after the INIT2PREOP transition, in that
             case there is no last sent service (psReadMbx = 0) */
         if ( psReadMbx )
-            psWriteMbx = NULL;
-        else
         {
-            /* only the first time after the INIT2PREOP-transition */
-            psWriteMbx = &asMbx[1];
+            psWriteMbx = NULL;
         }
         // HBu 17.06.06: psRepeatMbx was already updated in MBX_MailboxReadInd
         // psRepeatMbx = psReadMbx;
@@ -900,7 +928,9 @@ void MBX_Main(void)
 
         pMbx = GetOutOfMbxQueue(&sMbxReceiveQueue);
         if ( pMbx )
+        {
             result = MailboxServiceInd(pMbx);
+        }
 
         if ( result != 0 )
         {
@@ -913,7 +943,6 @@ void MBX_Main(void)
         }
     }
     while ( pMbx != NULL );
-
 
 
       if ( bReceiveMbxIsLocked )

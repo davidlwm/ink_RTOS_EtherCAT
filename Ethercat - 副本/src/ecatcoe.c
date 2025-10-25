@@ -1,3 +1,8 @@
+/*
+* This source file is part of the EtherCAT Slave Stack Code licensed by Beckhoff Automation GmbH & Co KG, 33415 Verl, Germany. 
+* The corresponding license agreement applies. This hint shall not be removed.
+*/
+
 /**
 \addtogroup CoE CAN Application Profile over EtherCAT
 @{
@@ -37,9 +42,8 @@ V4.08 MBX 1: If the switch MAILBOX_QUEUE was set, we have to put all SDO Info Re
 #define    _ECATCOE_    1
 #include "ecatcoe.h"
 #undef      _ECATCOE_
-/* ECATCHANGE_START(V5.11) ECAT10*/
 /*remove definition of _ECATCOE_ (#ifdef is used in ecatcoe.h)*/
-/* ECATCHANGE_END(V5.11) ECAT10*/
+
 
 
 
@@ -140,9 +144,7 @@ UINT8 COE_ServiceInd(TCOEMBX MBXMEM *pCoeMbx)
  \brief  be put in the send mailbox.
 *////////////////////////////////////////////////////////////////////////////////////////
 
-/*ECATCHANGE_START(V5.11) COE4*/
 UINT8 COE_ContinueInd(TMBX MBXMEM * pMbx)
-/*ECATCHANGE_END(V5.11) COE4*/
 {
     if (pCoeSendStored)
     {
@@ -156,13 +158,11 @@ UINT8 COE_ContinueInd(TMBX MBXMEM * pMbx)
         /* in mailbox queue mode pMbx is always 0, so a mailbox buffer shall be get */
         pMbx = (TMBX MBXMEM *) APPL_AllocMailboxBuffer(SIZEOF(TMBX));
         /* it shall be checked if a valid pointer was returned */
-/*ECATCHANGE_START(V5.11) COE4*/
         if (pMbx == NULL)
         {
             return MBXERR_NOMOREMEMORY;
         }
         else
-/*ECATCHANGE_END(V5.11) COE4*/
         {
             /* copy the stored SDO-Info-Header in the request */
             MBXMEMCPY(pMbx, aSdoInfoHeader, SDO_INFO_HEADER_BYTE_SIZE);

@@ -1,15 +1,25 @@
+/*
+* This source file is part of the EtherCAT Slave Stack Code licensed by Beckhoff Automation GmbH & Co KG, 33415 Verl, Germany.
+* The corresponding license agreement applies. This hint shall not be removed.
+*/
+
 /**
 \addtogroup EcatAppl EtherCAT application
 @{
 */
 
 /**
-\file applInterface.c
+\file applInterface.h
 \author EthercatSSC@beckhoff.com
 \brief Definition of the application interface functions
 
-\version 5.11
+\version 5.12
 
+<br>Changes to version V5.11:<br>
+V5.12 APPL1: add optional application function called from the main loop (after mbx and esm are executed)<br>
+V5.12 EEPROM3: implement a store EEPROM timeout handler<br>
+V5.12 EOE1: move icmp sample to the sampleappl,add EoE application interface functions<br>
+V5.12 FOE1: update new interface,move the FoE sample to sampleappl,add FoE application callback functions<br>
 <br>Changes to version - :<br>
 V5.10.1 : Start file change log
 */
@@ -34,6 +44,8 @@ V5.10.1 : Start file change log
 
 
 
+
+
 #endif /*#ifndef _APPL_INTERFACE_H_*/
 
 #if defined(_APPL_INTERFACE_) && (_APPL_INTERFACE_ == 1)
@@ -48,39 +60,18 @@ V5.10.1 : Start file change log
 ------
 -----------------------------------------------------------------------------------------*/
 
+
+
+
+
+
+/*ECATCHANGE_START(V5.12) APPL1*/
 /////////////////////////////////////////////////////////////////////////////////////////
 /**
- \return   0 if successful or greater 0 in case of an error
- 
- \param    wordaddr      Word address of the EEPROM data to be read
- 
- \brief    This function shall copy EEPROM data to the ESC EEPROM data register (0x508:0x50F/0x50B).
- \brief    The EEPROM data starting at the specified word address and the length specified with "EEPROM_READ_SIZE".
- \brief    The data shall be copied to the ESC EEPROM buffer (ESC offset 0x508)
+\brief    This function is called by the SSC from the main loop
 *////////////////////////////////////////////////////////////////////////////////////////
-PROTO UINT16 (* pAPPL_EEPROM_Read)(UINT32 wordaddr);
-
-/////////////////////////////////////////////////////////////////////////////////////////
-/**
-\return   0 if successful or greater 0 in case of an error
-
-\param    wordaddr      Word address of the EEPROM data to be written
-
-\brief    This function shall copy data from the ESC EEPROM data register (0x508:0x50F/0x50B) to the EEPROM memory.
-\brief    The EEPROM data starting at the specified word address and the length specified with "EEPROM_WRITE_SIZE".
-*////////////////////////////////////////////////////////////////////////////////////////
-PROTO UINT16(*pAPPL_EEPROM_Write)(UINT32 wordaddr);
-
-/////////////////////////////////////////////////////////////////////////////////////////
-/**
-\return   0 if successful or greater 0 in case of an error
-
-\brief    This function shall copy the EEPROM reload information to the ESC EEPROM data register (0x508:0x50F/0x50B).
-\brief    Read the ESC data sheet for the reload information (e.g. Beckhoff IPCore ESC Datasheet section II, clause 3.45.1)
-*////////////////////////////////////////////////////////////////////////////////////////
-PROTO UINT16(*pAPPL_EEPROM_Reload)(void);
-
-
+PROTO void(*pAPPL_MainLoop)();
+/*ECATCHANGE_END(V5.12) APPL1*/
 
 /*-----------------------------------------------------------------------------------------
 ------
@@ -121,5 +112,7 @@ PROTO void MainLoop(void);
 \brief    NOTE: state requests to a higher state than the current state are not allowed.
 *////////////////////////////////////////////////////////////////////////////////////////
 PROTO void ECAT_StateChange(UINT8 alStatus, UINT16 alStatusCode);
+
+
 
 #undef PROTO

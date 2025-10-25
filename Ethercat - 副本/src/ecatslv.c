@@ -1,3 +1,8 @@
+/*
+* This source file is part of the EtherCAT Slave Stack Code licensed by Beckhoff Automation GmbH & Co KG, 33415 Verl, Germany.
+* The corresponding license agreement applies. This hint shall not be removed.
+*/
+
 /**
 \addtogroup ESM EtherCAT State Machine
 @{
@@ -9,14 +14,25 @@
 \brief Implementation
 This file contains the EtherCAT State Machine.
 
-\version 5.11
+\version 5.12
 
+<br>Changes to version V5.11:<br>
+V5.12 BOOT1: add a bootloader sample application (only the ESM and FoE is supported)<br>
+V5.12 ECAT1: update SM Parameter measurement (based on the system time), enhancement for input only devices and no mailbox support, use only 16Bit pointer in process data length caluclation<br>
+V5.12 ECAT4: update Sync1 watchdog calculation (in case of subordinated cycles take one addiitonal Sync0 cycle into account )<br>
+V5.12 ECAT5: update Sync error counter/flag handling,check enum memory alignment depending on the processor,in case of a polled timer disable ESC interrupts during DC_CheckWatchdog<br>
+V5.12 ECAT7: set error single flash also in case of an application error<br>
+V5.12 ESM1: overwrite the current error in case of a local error with a lower target state,Do not overwrite the current AL Status in case of an local error<br>
+V5.12 ESM2: enable the PD SM in case of a clear error transition<br>
+V5.12 ESM3: set internal ESM timeout to -10% of the configured value (to return an errorcode before the master will run into an timeout)<br>
+V5.12 ESM4: enable the AL Event mask in case of pending ESM transition<br>
+V5.12 TEST2: add pending ESM test,trigger complete ESM transition from ecat main<br>
 <br>Changes to version V5.10:<br>
 V5.11 COE3: change 0x10F3.2 (Sync Error limit) from UINT32 to UINT16 (according to the ETG.1020)<br>
 V5.11 DIAG4: change parameter handling in DIAG_CreateNewMessage()<br>
 V5.11 ECAT10: change PROTO handling to prevent compiler errors<br>
 V5.11 ECAT4: enhance SM/Sync monitoring for input/output only slaves<br>
-V5.11 ECAT5: "Add missing ""bEscAlEventEnbaled"" initialization if ""AL_EVENT_ENBALED"" is 0"""<br>
+V5.11 ECAT5: "Add missing ""bEscIntEnabled"" initialization if ""AL_EVENT_ENBALED"" is 0"""<br>
 V5.11 ECAT7: add missing big endian swapping<br>
 V5.11 ESC1: update max address calculation<br>
 V5.11 ESM1: update calculation of subordinated cycles<br>
@@ -173,11 +189,10 @@ V4.00 ECAT 7: The return values for the AL-StatusCode were changed to UINT16
 #define    _ECATSLV_    1
 #include "ecatslv.h"
 #undef    _ECATSLV_
-/* ECATCHANGE_START(V5.11) ECAT10*/
 /*remove definition of _ECATSLV_ (#ifdef is used in ecatslv.h)*/
-/* ECATCHANGE_END(V5.11) ECAT10*/
 
 #include "ecatappl.h"
+
 
 
 
@@ -189,7 +204,7 @@ V4.00 ECAT 7: The return values for the AL-StatusCode were changed to UINT16
 
 
 
-#include "SSC-Ink-control.h"
+#include "SSC-Device.h"
 
 /*--------------------------------------------------------------------------------------
 ------
@@ -211,7 +226,6 @@ UINT16    u16ALEventMask;                      // Value which will be written to
 
         VARVOLATILE UINT16 SMActivate = 0;
 
-/*ECATCHANGE_START(V5.11) HW1*/
 TSYNCMAN		SyncManInfo;
 
 //indicates if the EEPORM was loaded correct
@@ -221,6 +235,9 @@ BOOL EepromLoaded = FALSE;
 ------    local functions
 ------
 -----------------------------------------------------------------------------------------*/
+
+void ResetALEventMask(UINT16 intMask);
+
 /////////////////////////////////////////////////////////////////////////////////////////
 /**
  \param    intMask        interrupt mask (disabled interrupt shall be zero)
@@ -233,6 +250,7 @@ void ResetALEventMask(UINT16 intMask)
     HW_EscReadWord(mask, ESC_AL_EVENTMASK_OFFSET);
     
     mask &= intMask;
+
 
     DISABLE_ESC_INT();
 
@@ -252,6 +270,7 @@ void SetALEventMask(UINT16 intMask)
     UINT16 mask;
     HW_EscReadWord(mask, ESC_AL_EVENTMASK_OFFSET);
     
+
     mask |= intMask;
 
     DISABLE_ESC_INT();
@@ -269,21 +288,20 @@ void SetALEventMask(UINT16 intMask)
 *////////////////////////////////////////////////////////////////////////////////////////
 void UpdateEEPROMLoadedState(void)
 {
-    {
-       UINT16 TmpVar = 0;
-       //read EEPROM loaded information
-       HW_EscReadWord(TmpVar, ESC_EEPROM_CONTROL_OFFSET);
-       TmpVar = SWAPWORD(TmpVar);
+    UINT16 TmpVar = 0;
+    //read EEPROM loaded information
+    HW_EscReadWord(TmpVar, ESC_EEPROM_CONTROL_OFFSET);
+    TmpVar = SWAPWORD(TmpVar);
 
-       if (((TmpVar & ESC_EEPROM_ERROR_CRC) > 0)
-          || ((TmpVar & ESC_EEPROM_ERROR_LOAD) > 0))
-       {
-          EepromLoaded = FALSE;
-       }
-       else
-       {
-          EepromLoaded = TRUE;
-       }
+
+    if (((TmpVar & ESC_EEPROM_ERROR_CRC) > 0)
+        || ((TmpVar & ESC_EEPROM_ERROR_LOAD) > 0))
+    {
+        EepromLoaded = FALSE;
+    }
+    else
+    {
+        EepromLoaded = TRUE;
     }
 }
 
@@ -308,6 +326,7 @@ void UpdateEEPROMLoadedState(void)
 TSYNCMAN ESCMEM * GetSyncMan( UINT8 channel )
 {
     HW_EscRead((MEM_ADDR *)&SyncManInfo, ESC_SYNCMAN_REG_OFFSET + (channel * SIZEOF_SM_REGISTER), SIZEOF_SM_REGISTER );
+
 
 
     return &SyncManInfo;
@@ -359,7 +378,6 @@ void EnableSyncManChannel(UINT8 channel)
 
     }while((smStatus & SM_SETTING_PDI_DISABLE));
 }
-/*ECATCHANGE_END(V5.11) HW1*/
 
 
 
@@ -381,159 +399,172 @@ UINT8    CheckSmSettings(UINT8 maxChannel)
     UINT16 SMLength = 0;
     UINT16 SMAddress = 0;
 
-    //Check if max address defines are within the available ESC address range
-    if((nMaxEscAddress < MAX_PD_WRITE_ADDRESS)
-        ||(nMaxEscAddress < MAX_PD_READ_ADDRESS)
-/*ECATCHANGE_START(V5.11) ESM5*/
-        ||(nMaxEscAddress < MAX_MBX_WRITE_ADDRESS)
-/*ECATCHANGE_END(V5.11) ESM5*/
-        ||(nMaxEscAddress < MAX_MBX_READ_ADDRESS))
-    {
-        /*The defines for maximum SM addresses are invalid for the used ESC (change the defines in the file ecat_def.h or the SSC Tool)
-        It may be also required to adapt the SM settings in the ESI file*/
 
-        return ALSTATUSCODE_NOVALIDFIRMWARE;
-    }
+        //Check if max address defines are within the available ESC address range
+        if ((nMaxEscAddress < MAX_PD_WRITE_ADDRESS)
+            || (nMaxEscAddress < MAX_PD_READ_ADDRESS)
+            || (nMaxEscAddress < MAX_MBX_WRITE_ADDRESS)
+            || (nMaxEscAddress < MAX_MBX_READ_ADDRESS))
+        {
+            /*The defines for maximum SM addresses are invalid for the used ESC (change the defines in the file ecat_def.h or the SSC Tool)
+            It may be also required to adapt the SM settings in the ESI file*/
+
+
+                return ALSTATUSCODE_NOVALIDFIRMWARE;
+        }
 
     /* check the Sync Manager Parameter for the Receive Mailbox (Sync Manager Channel 0) */
-/*ECATCHANGE_START(V5.11) HW1*/
     pSyncMan = GetSyncMan(MAILBOX_WRITE);
-/*ECATCHANGE_END(V5.11) HW1*/
 
     SMLength = pSyncMan->Length;
     SMAddress = pSyncMan->PhysicalStartAddress;
 
-/* ECATCHANGE_START(V5.11) HW2*/
-    //Check if the start address and length are even 16Bit addresses
-    if ((SMLength & 0x1) > 0)
-        return ALSTATUSCODE_INVALIDSMCFG;
 
-    if ((SMAddress & 0x1) > 0)
-        return ALSTATUSCODE_INVALIDSMCFG;
-/* ECATCHANGE_END(V5.11) HW2*/
 
     if (!(pSyncMan->Settings[SM_SETTING_ACTIVATE_OFFSET] & SM_SETTING_ENABLE_VALUE))
+    {
         /* receive mailbox is not enabled */
         result = ALSTATUSCODE_INVALIDMBXCFGINPREOP;
-    else if ( (pSyncMan->Settings[SM_SETTING_CONTROL_OFFSET] & SM_SETTING_DIRECTION_MASK) != SM_SETTING_DIRECTION_WRITE_VALUE)
-       /* receive mailbox is not writable by the master*/
+    }
+    else if ((pSyncMan->Settings[SM_SETTING_CONTROL_OFFSET] & SM_SETTING_DIRECTION_MASK) != SM_SETTING_DIRECTION_WRITE_VALUE)
+    {
+        /* receive mailbox is not writable by the master*/
         result = ALSTATUSCODE_INVALIDMBXCFGINPREOP;
-    else if ( (pSyncMan->Settings[SM_SETTING_CONTROL_OFFSET] & SM_SETTING_MODE_MASK) != SM_SETTING_MODE_ONE_BUFFER_VALUE )
+    }
+    else if ((pSyncMan->Settings[SM_SETTING_CONTROL_OFFSET] & SM_SETTING_MODE_MASK) != SM_SETTING_MODE_ONE_BUFFER_VALUE)
+    {
         /* receive mailbox is not in one buffer mode */
         result = ALSTATUSCODE_INVALIDMBXCFGINPREOP;
-    else if ( SMLength < MIN_MBX_SIZE )
+    }
+    else if (SMLength < MIN_MBX_SIZE)
+    {
         /* receive mailbox size is too small */
         result = ALSTATUSCODE_INVALIDMBXCFGINPREOP;
-    else if ( SMLength > MAX_MBX_SIZE )
+    }
+    else if (SMLength > MAX_MBX_SIZE)
+    {
         /* receive mailbox size is too great */
         result = ALSTATUSCODE_INVALIDMBXCFGINPREOP;
-     else if ( SMAddress < MIN_MBX_WRITE_ADDRESS )
+    }
+    else if (SMAddress < MIN_MBX_WRITE_ADDRESS)
+    {
         /* receive mailbox address is too small */
         result = ALSTATUSCODE_INVALIDMBXCFGINPREOP;
-    else if ( SMAddress > MAX_MBX_WRITE_ADDRESS)
+    }
+    else if (SMAddress > MAX_MBX_WRITE_ADDRESS)
+    {
         /* receive mailbox address is too great */
         result = ALSTATUSCODE_INVALIDMBXCFGINPREOP;
+    }
 
 
     if ( result == 0 )
     {
         /* check the Sync Manager Parameter for the Send Mailbox (Sync Manager Channel 1) */
-/*ECATCHANGE_START(V5.11) HW1*/
         pSyncMan = GetSyncMan(MAILBOX_READ);
-/*ECATCHANGE_END(V5.11) HW1*/
 
     SMLength = pSyncMan->Length;
     SMAddress = pSyncMan->PhysicalStartAddress;
 
-/* ECATCHANGE_START(V5.11) HW2*/
-    //Check if the start address and length are even 16Bit addresses
-    if ((SMLength & 0x1) > 0)
-        return ALSTATUSCODE_INVALIDSMCFG;
 
-    if ((SMAddress & 0x1) > 0)
-        return ALSTATUSCODE_INVALIDSMCFG;
-/* ECATCHANGE_END(V5.11) HW2*/
-
-      if (!(pSyncMan->Settings[SM_SETTING_ACTIVATE_OFFSET] & SM_SETTING_ENABLE_VALUE))
-            /* send mailbox is not enabled */
-            result = ALSTATUSCODE_INVALIDMBXCFGINPREOP;
-        else if ( (pSyncMan->Settings[SM_SETTING_CONTROL_OFFSET] & SM_SETTING_DIRECTION_MASK) != SM_SETTING_DIRECTION_READ_VALUE)
-           /* receive mailbox is not readable by the master*/
-            result = ALSTATUSCODE_INVALIDMBXCFGINPREOP;
-        else if ( (pSyncMan->Settings[SM_SETTING_CONTROL_OFFSET] & SM_SETTING_MODE_MASK) != SM_SETTING_MODE_ONE_BUFFER_VALUE )
-            /* receive mailbox is not in one buffer mode */
-            result = ALSTATUSCODE_INVALIDMBXCFGINPREOP;
-        else if ( SMLength < MIN_MBX_SIZE )
-            /* send mailbox size is too small */
-            result = ALSTATUSCODE_INVALIDMBXCFGINPREOP;
-        else if ( SMLength > MAX_MBX_SIZE )
-            /* send mailbox size is too great */
-            result = ALSTATUSCODE_INVALIDMBXCFGINPREOP;
-         else if ( SMAddress < MIN_MBX_READ_ADDRESS )
-            /* send mailbox address is too small */
-            result = ALSTATUSCODE_INVALIDMBXCFGINPREOP;
-        else if ( SMAddress > MAX_MBX_READ_ADDRESS )
-            /* send mailbox address is too great */
-            result = ALSTATUSCODE_INVALIDMBXCFGINPREOP;
-
+    if (!(pSyncMan->Settings[SM_SETTING_ACTIVATE_OFFSET] & SM_SETTING_ENABLE_VALUE))
+    {
+        /* send mailbox is not enabled */
+        result = ALSTATUSCODE_INVALIDMBXCFGINPREOP;
+    }
+    else if ((pSyncMan->Settings[SM_SETTING_CONTROL_OFFSET] & SM_SETTING_DIRECTION_MASK) != SM_SETTING_DIRECTION_READ_VALUE)
+    {
+        /* receive mailbox is not readable by the master*/
+        result = ALSTATUSCODE_INVALIDMBXCFGINPREOP;
+    }
+    else if ((pSyncMan->Settings[SM_SETTING_CONTROL_OFFSET] & SM_SETTING_MODE_MASK) != SM_SETTING_MODE_ONE_BUFFER_VALUE)
+    {
+        /* receive mailbox is not in one buffer mode */
+        result = ALSTATUSCODE_INVALIDMBXCFGINPREOP;
+    }
+    else if (SMLength < MIN_MBX_SIZE)
+    {
+        /* send mailbox size is too small */
+        result = ALSTATUSCODE_INVALIDMBXCFGINPREOP;
+    }
+    else if (SMLength > MAX_MBX_SIZE)
+    {
+        /* send mailbox size is too great */
+        result = ALSTATUSCODE_INVALIDMBXCFGINPREOP;
+    }
+    else if (SMAddress < MIN_MBX_READ_ADDRESS)
+    {
+        /* send mailbox address is too small */
+        result = ALSTATUSCODE_INVALIDMBXCFGINPREOP;
+    }
+    else if (SMAddress > MAX_MBX_READ_ADDRESS)
+    {
+        /* send mailbox address is too great */
+        result = ALSTATUSCODE_INVALIDMBXCFGINPREOP;
+    }
     }
 
     if ( result == 0 && maxChannel > PROCESS_DATA_IN )
     {
         /* b3BufferMode is only set, if inputs and outputs are running in 3-Buffer-Mode when leaving this function */
         b3BufferMode = TRUE;
-        /* check the Sync Manager Parameter for the Inputs (Sync Manager Channel 2) */
-/*ECATCHANGE_START(V5.11) HW1*/
+        /* check the Sync Manager Parameter for the Inputs (Sync Manager Channel 2 (0 in case if no mailbox is supported)) */
         pSyncMan = GetSyncMan(PROCESS_DATA_IN);
-/*ECATCHANGE_END(V5.11) HW1*/
 
     SMLength = pSyncMan->Length;
     SMAddress = pSyncMan->PhysicalStartAddress;
 
-/* ECATCHANGE_START(V5.11) HW2*/
-    //Check if the start address and length are even 16Bit addresses
-    if ((SMLength & 0x1) > 0)
-        return ALSTATUSCODE_INVALIDSMCFG;
 
-    if ((SMAddress & 0x1) > 0)
-        return ALSTATUSCODE_INVALIDSMCFG;
-/* ECATCHANGE_END(V5.11) HW2*/
 
-        if ((pSyncMan->Settings[SM_SETTING_ACTIVATE_OFFSET] & SM_SETTING_ENABLE_VALUE) != 0 && SMLength == 0 )
-            /* the SM3 size is 0 and the SM3 is active */
-            result = SYNCMANCHSETTINGS+1;
+    if ((pSyncMan->Settings[SM_SETTING_ACTIVATE_OFFSET] & SM_SETTING_ENABLE_VALUE) != 0 && SMLength == 0)
+    {
+        /* the SM3 size is 0 and the SM3 is active */
+        result = SYNCMANCHSETTINGS + 1;
+    }
         else if (pSyncMan->Settings[SM_SETTING_ACTIVATE_OFFSET] & SM_SETTING_ENABLE_VALUE)
         {
             /* Sync Manager Channel 3 is active, input size has to greater 0 */
-            if ( SMLength != nPdInputSize || nPdInputSize == 0 || SMLength > MAX_PD_INPUT_SIZE)
-                /* sizes don't match */
-                result = SYNCMANCHSIZE+1;
-            else
-                /* sizes matches */
-            if ( (pSyncMan->Settings[SM_SETTING_CONTROL_OFFSET] & SM_SETTING_DIRECTION_MASK) == SM_SETTING_DIRECTION_READ_VALUE )
-            {
-                /* settings match */
-                if ( ( ( nAlStatus == STATE_PREOP )&&( SMAddress >= MIN_PD_READ_ADDRESS )&&( SMAddress <= MAX_PD_READ_ADDRESS ) )
-                   ||( ( nAlStatus != STATE_PREOP )&&( SMAddress == nEscAddrInputData ) )
-                    )
+                if (SMLength != nPdInputSize || nPdInputSize == 0 || SMLength > MAX_PD_INPUT_SIZE)
                 {
-                    /* addresses match */
-
-                    if ( (pSyncMan->Settings[SM_SETTING_CONTROL_OFFSET] & SM_SETTING_MODE_MASK) == SM_SETTING_MODE_ONE_BUFFER_VALUE )
-                        /* inputs are running in 1-Buffer-Mode, reset flag b3BufferMode */
-                        b3BufferMode = FALSE;
+                    /* sizes don't match */
+                    result = SYNCMANCHSIZE + 1;
                 }
                 else
-                    /* input address is out of the allowed area or has changed in SAFEOP or OP */
-                    result = SYNCMANCHADDRESS+1;
-            }
-            else
-                /* input settings do not match */
-                result = SYNCMANCHSETTINGS+1;
+                {
+                    /* sizes matches */
+                    if ((pSyncMan->Settings[SM_SETTING_CONTROL_OFFSET] & SM_SETTING_DIRECTION_MASK) == SM_SETTING_DIRECTION_READ_VALUE)
+                    {
+                        /* settings match */
+                        if (((nAlStatus == STATE_PREOP) && (SMAddress >= MIN_PD_READ_ADDRESS) && (SMAddress <= MAX_PD_READ_ADDRESS))
+                            || ((nAlStatus != STATE_PREOP) && (SMAddress == nEscAddrInputData))
+                            )
+                        {
+                            /* addresses match */
+
+                                if ((pSyncMan->Settings[SM_SETTING_CONTROL_OFFSET] & SM_SETTING_MODE_MASK) == SM_SETTING_MODE_ONE_BUFFER_VALUE)
+                                {
+                                    /* inputs are running in 1-Buffer-Mode, reset flag b3BufferMode */
+                                    b3BufferMode = FALSE;
+                                }
+                        }
+                        else
+                        {
+                            /* input address is out of the allowed area or has changed in SAFEOP or OP */
+                            result = SYNCMANCHADDRESS + 1;
+                        }
+                    }
+                    else
+                    {
+                        /* input settings do not match */
+                        result = SYNCMANCHSETTINGS + 1;
+                    }
+                }
         }
-        else if ( SMLength != 0 || nPdInputSize != 0 )
+        else if (SMLength != 0 || nPdInputSize != 0)
+        {
             /* input size is not zero although the SM3 channel is not enabled */
-            result = SYNCMANCHSIZE+1;
+            result = SYNCMANCHSIZE + 1;
+        }
 
 
 
@@ -545,33 +576,25 @@ UINT8    CheckSmSettings(UINT8 maxChannel)
 
 
 //    else
-    if ( result == 0 && maxChannel > PROCESS_DATA_OUT )
+    if (result == 0 && maxChannel > PROCESS_DATA_OUT)
     {
         /* check the Sync Manager Parameter for the Outputs (Sync Manager Channel 2) */
-/*ECATCHANGE_START(V5.11) HW1*/
         pSyncMan = GetSyncMan(PROCESS_DATA_OUT);
-/*ECATCHANGE_END(V5.11) HW1*/
 
     SMLength = pSyncMan->Length;
     SMAddress = pSyncMan->PhysicalStartAddress;
 
-/* ECATCHANGE_START(V5.11) HW2*/
-    //Check if the start address and length are even 16Bit addresses
-    if ((SMLength & 0x1) > 0)
-        return ALSTATUSCODE_INVALIDSMCFG;
 
-    if ((SMAddress & 0x1) > 0)
-        return ALSTATUSCODE_INVALIDSMCFG;
-/* ECATCHANGE_END(V5.11) HW2*/
 
-    if ( (pSyncMan->Settings[SM_SETTING_ACTIVATE_OFFSET] & SM_SETTING_ENABLE_VALUE) != 0 && SMLength == 0 )
-            /* the SM2 size is 0 and the SM2 is active */
-            result = SYNCMANCHSETTINGS+1;
+    if ((pSyncMan->Settings[SM_SETTING_ACTIVATE_OFFSET] & SM_SETTING_ENABLE_VALUE) != 0 && SMLength == 0)
+    {
+        /* the SM2 size is 0 and the SM2 is active */
+        result = SYNCMANCHSETTINGS + 1;
+    }
         else if (pSyncMan->Settings[SM_SETTING_ACTIVATE_OFFSET] & SM_SETTING_ENABLE_VALUE)
         {
             /* Sync Manager Channel 2 is active, output size has to greater 0 */
             if ( SMLength == nPdOutputSize && nPdOutputSize != 0 && SMLength <= ((UINT16)MAX_PD_OUTPUT_SIZE))
-
             {
                 /* sizes match */
                 if ( (pSyncMan->Settings[SM_SETTING_CONTROL_OFFSET] & SM_SETTING_DIRECTION_MASK) == SM_SETTING_DIRECTION_WRITE_VALUE )
@@ -593,26 +616,36 @@ UINT8    CheckSmSettings(UINT8 maxChannel)
                                 bWdTrigger = FALSE;
                             }
 
-                            if ( (pSyncMan->Settings[SM_SETTING_CONTROL_OFFSET] & SM_SETTING_MODE_MASK) == SM_SETTING_MODE_ONE_BUFFER_VALUE )
+                            if ((pSyncMan->Settings[SM_SETTING_CONTROL_OFFSET] & SM_SETTING_MODE_MASK) == SM_SETTING_MODE_ONE_BUFFER_VALUE)
+                            {
                                 /* outputs are running in 1-Buffer-Mode, reset flag b3BufferMode */
                                 b3BufferMode = FALSE;
+                                }
                         }
                     }
                     else
+                    {
                         /* output address is out of the allowed area or has changed in SAFEOP or OP */
-                        result = SYNCMANCHADDRESS+1;
+                        result = SYNCMANCHADDRESS + 1;
+                    }
                 }
                 else
+                {
                     /* output settings do not match */
-                    result = SYNCMANCHSETTINGS+1;
+                    result = SYNCMANCHSETTINGS + 1;
+                }
             }
             else
+            {
                 /* output sizes don't match */
-                result = SYNCMANCHSIZE+1;
+                result = SYNCMANCHSIZE + 1;
+            }
         }
-        else if ( SMLength != 0 || nPdOutputSize != 0 )
+        else if (SMLength != 0 || nPdOutputSize != 0)
+        {
             /* output size is not zero although the SM2 channel is not enabled */
-            result = SYNCMANCHSIZE+1;
+            result = SYNCMANCHSIZE + 1;
+        }
 
         if ( result != 0 )
         {
@@ -626,9 +659,7 @@ UINT8    CheckSmSettings(UINT8 maxChannel)
         /* the Enable-Byte of the rest of the SM channels has to be read to acknowledge the SM-Change-Interrupt */
         for (i = maxChannel; i < nMaxSyncMan; i++)
         {
-/*ECATCHANGE_START(V5.11) HW1*/
             pSyncMan = GetSyncMan(i);
-/*ECATCHANGE_END(V5.11) HW1*/
             SMActivate = pSyncMan->Settings[SM_SETTING_ACTIVATE_OFFSET];
         }
     }
@@ -651,15 +682,15 @@ UINT16 StartInputHandler(void)
 {
     TSYNCMAN ESCMEM * pSyncMan;
     UINT16        dcControl;
+
     UINT16     wdiv = 0;
-/*ECATCHANGE_START(V5.11) ECAT4*/
     UINT16     wd = 0;
-/*ECATCHANGE_END(V5.11) ECAT4*/
     UINT32     cycleTimeSync0 = 0; /* Sync0 cycle time */
-    UINT32     cycleTimeSync1 = 0; /* Delay between the Sync0 and Sycn1 signal. A new Sync1 cycle starts on the next Sync0 signal after Sync1 signal.*/
+    UINT32     shiftTimeSync1 = 0; /* Delay between the Sync0 and Sycn1 signal. A new Sync1 cycle starts on the next Sync0 signal after Sync1 signal.*/
     BOOL bSubordinatedCycles = FALSE;
 
     UINT16    nPdInputBuffer = 3;
+
     UINT16    nPdOutputBuffer = 3;
 
     UINT16 SyncType0x1C32 = 0; /* Helper variable for sync type for SM2 (required if no CoE is supported or no output process data available)*/
@@ -672,15 +703,14 @@ UINT16 StartInputHandler(void)
 
     u16ALEventMask = 0;
 
+
     /* 
         --- Check if SyncManager areas overlapping --- 
     */
     bEcatFirstOutputsReceived = FALSE;
 
     /* get a pointer to the Sync Manager Channel 2 (Outputs) */
-/*ECATCHANGE_START(V5.11) HW1*/
     pSyncMan = GetSyncMan(PROCESS_DATA_OUT);
-/*ECATCHANGE_END(V5.11) HW1*/
     /* store the address of the Sync Manager Channel 2 (Outputs) */
     nEscAddrOutputData = pSyncMan->PhysicalStartAddress;
     /* get the number of output buffer used for calculating the address areas */
@@ -691,16 +721,16 @@ UINT16 StartInputHandler(void)
 
 
     /* get a pointer to the Sync Manager Channel 3 (Inputs) */
-/*ECATCHANGE_START(V5.11) HW1*/
     pSyncMan = GetSyncMan(PROCESS_DATA_IN);
-/*ECATCHANGE_END(V5.11) HW1*/
     /* store the address of the Sync Manager Channel 3 (Inputs)*/
     nEscAddrInputData = pSyncMan->PhysicalStartAddress;
-    
-    /* get the number of input buffer used for calculating the address areas */
-    if ( pSyncMan->Settings[SM_SETTING_CONTROL_OFFSET] & SM_SETTING_MODE_ONE_BUFFER_VALUE )
-        nPdInputBuffer = 1;
 
+
+    /* get the number of input buffer used for calculating the address areas */
+    if (pSyncMan->Settings[SM_SETTING_CONTROL_OFFSET] & SM_SETTING_MODE_ONE_BUFFER_VALUE)
+    {
+        nPdInputBuffer = 1;
+    }
     /* it has be checked if the Sync Manager memory areas for Inputs and Outputs will not overlap
        the Sync Manager memory areas for the Mailbox */
 
@@ -718,6 +748,7 @@ UINT16 StartInputHandler(void)
         ((nEscAddrOutputData + nPdOutputSize * nPdOutputBuffer) > nEscAddrInputData && (nEscAddrOutputData < (nEscAddrInputData + nPdInputSize)))
         )
     {
+
         /* Sync Manager Channel 2 memory area (Outputs) overlaps the Sync Manager memory areas for the Mailbox
            or the Sync Manager Channel 3 memory area (Inputs) */
         return ALSTATUSCODE_INVALIDSMOUTCFG;
@@ -737,8 +768,8 @@ UINT16 StartInputHandler(void)
         cycleTimeSync0 = SWAPDWORD(cycleTimeSync0);
 
     // Cycle time for Sync1
-        HW_EscReadDWord(cycleTimeSync1, ESC_DC_SYNC1_CYCLETIME_OFFSET);
-        cycleTimeSync1 = SWAPDWORD(cycleTimeSync1);
+        HW_EscReadDWord(shiftTimeSync1, ESC_DC_SYNC1_CYCLETIME_OFFSET);
+        shiftTimeSync1 = SWAPDWORD(shiftTimeSync1);
 
 
     SyncType0x1C32 = sSyncManOutPar.u16SyncType;
@@ -768,28 +799,33 @@ UINT16 StartInputHandler(void)
 
         if(u16MinSuppSyncType != 0)
         {
-/*ECATCHANGE_START(V5.11) ESM2*/
             if((((u16MinSuppSyncType & SYNCTYPE_DCSYNC0SUPP) == 0) && ((dcControl & ESC_DC_SYNC0_ACTIVE_MASK) != 0))
                 ||(((u16MinSuppSyncType & SYNCTYPE_DCSYNC1SUPP) == 0) && ((dcControl & ESC_DC_SYNC1_ACTIVE_MASK) != 0)))
-/*ECATCHANGE_END(V5.11) ESM2*/
             {
                 /* Sync0 is not supported but will be generated*/
                 return ALSTATUSCODE_DCINVALIDSYNCCFG;                   
     }
         }
 
-        /*Check if Sync0 cycle time is supported*/
-        if ( cycleTimeSync0 != 0 && (cycleTimeSync0 < MIN_PD_CYCLE_TIME || cycleTimeSync0 > MAX_PD_CYCLE_TIME) )
-            return ALSTATUSCODE_DCSYNC0CYCLETIME;
+        {
+/*ECATCHANGE_START(V5.12) ECAT1*/
+            UINT32 curMinCycleTime = MIN_PD_CYCLE_TIME;
+            curMinCycleTime = sSyncManOutPar.u32MinCycleTime;
+
+            /*Check if Sync0 cycle time is supported*/
+            if (cycleTimeSync0 != 0 && (cycleTimeSync0 < curMinCycleTime || cycleTimeSync0 > MAX_PD_CYCLE_TIME))
+            {
+                    return ALSTATUSCODE_DCSYNC0CYCLETIME;
+            }
+/*ECATCHANGE_END(V5.12) ECAT1*/
+        }
 
 
         /* Check if Subordinated cycles are configured */
         if(((dcControl & ESC_DC_SYNC0_ACTIVE_MASK) != 0) && ((dcControl & ESC_DC_SYNC1_ACTIVE_MASK) != 0))
         {
             /* For Subordinated cycles both Sync signals shall be active and Sync0 is not configured in single shot (cycle time == 0)*/
-/*ECATCHANGE_START(V5.11) ESM1*/
-            if((cycleTimeSync1 > 0) && (cycleTimeSync1 >= cycleTimeSync0))
-/*ECATCHANGE_END(V5.11) ESM1*/
+            if((shiftTimeSync1 > 0) && (shiftTimeSync1 >= cycleTimeSync0))
             {
                 bSubordinatedCycles = TRUE;
             }
@@ -822,10 +858,8 @@ UINT16 StartInputHandler(void)
             if((dcControl & ESC_DC_SYNC1_ACTIVE_MASK) == 0)
             {
                 /* No Sync 1 is generated => No Sync1 Sync Type shall configured*/
-/*ECATCHANGE_START(V5.11) ESM3*/
                 if((SyncType0x1C32 == (UINT16)SYNCTYPE_DCSYNC1)
                     ||(SyncType0x1C33 == (UINT16)SYNCTYPE_DCSYNC1))
-/*ECATCHANGE_END(V5.11) ESM3*/
                 {
                     return ALSTATUSCODE_DCINVALIDSYNCCFG;
                 }
@@ -834,10 +868,8 @@ UINT16 StartInputHandler(void)
             if((dcControl & ESC_DC_SYNC0_ACTIVE_MASK) == 0)
             {
                 /* No Sync 0 is generated => No Sync0 Sync Type shall configured*/
-/*ECATCHANGE_START(V5.11) ESM3*/
                 if((SyncType0x1C32 == (UINT16)SYNCTYPE_DCSYNC0)
                     ||(SyncType0x1C33 == (UINT16)SYNCTYPE_DCSYNC0))
-/*ECATCHANGE_END(V5.11) ESM3*/
                 {
                     return ALSTATUSCODE_DCINVALIDSYNCCFG;
                 }
@@ -858,9 +890,13 @@ UINT16 StartInputHandler(void)
                 SyncType0x1C32 = SYNCTYPE_SM_SYNCHRON;
                 
                 if (nPdInputSize > 0)
+                {
                     SyncType0x1C33 = SYNCTYPE_SM2_SYNCHRON;
+                }
                 else
+                {
                     SyncType0x1C33 = SYNCTYPE_FREERUN;
+                }
             }
             else if (nPdInputSize > 0)
             {
@@ -872,7 +908,6 @@ UINT16 StartInputHandler(void)
                 SyncType0x1C32 = SYNCTYPE_FREERUN;
                 SyncType0x1C33 = SYNCTYPE_FREERUN;
             }
-            sSyncManOutPar.u16GetCycleTime = 1;
 
         }
         else
@@ -918,19 +953,21 @@ UINT16 StartInputHandler(void)
     /* Update Cycle time entries if DC Sync Mode enabled */
     if(SyncType0x1C32 == SYNCTYPE_DCSYNC1)
     {
+/*ECATCHANGE_START(V5.12) ECAT1*/
         sSyncManOutPar.u32Sync0CycleTime = (UINT32)cycleTimeSync0;
+        sSyncManOutPar.u32CycleTime = (UINT32)cycleTimeSync0;
 
-/*ECATCHANGE_START(V5.11) ECAT4*/
         sSyncManInPar.u32Sync0CycleTime = (UINT32)cycleTimeSync0;
-/*ECATCHANGE_END(V5.11) ECAT4*/
+        sSyncManInPar.u32CycleTime = (UINT32)cycleTimeSync0;
     }
     else if(SyncType0x1C32 == SYNCTYPE_DCSYNC0)
     {
         sSyncManOutPar.u32Sync0CycleTime = (UINT32)cycleTimeSync0;
+        sSyncManOutPar.u32CycleTime = (UINT32)cycleTimeSync0;
 
-/*ECATCHANGE_START(V5.11) ECAT4*/
-        sSyncManInPar.u32Sync0CycleTime = (UINT16)cycleTimeSync0;
-/*ECATCHANGE_END(V5.11) ECAT4*/
+        sSyncManInPar.u32Sync0CycleTime = (UINT32)cycleTimeSync0;
+        sSyncManInPar.u32CycleTime = (UINT32)cycleTimeSync0;
+/*ECATCHANGE_END(V5.12) ECAT1*/
     }
 
     /* Set global flags based on Sync Type */
@@ -970,13 +1007,11 @@ UINT16 StartInputHandler(void)
             /* slave is running in DC-mode */
             bDcSyncActive = TRUE;
 
-/*ECATCHANGE_START(V5.11) ECAT4*/
             /*In case of an Input only application with DC no PDI Isr handling is required*/
             if (nPdOutputSize == 0)
             {
                u16ALEventMask = 0;
             }
-/*ECATCHANGE_END(V5.11) ECAT4*/
         }
 
     sSyncManOutPar.u16SyncType = SyncType0x1C32;
@@ -991,16 +1026,21 @@ UINT16 StartInputHandler(void)
 
     if(bSubordinatedCycles == TRUE)
     {
+/*ECATCHANGE_START(V5.12) ECAT4*/
+        UINT32 cycleTimeSync1 = (shiftTimeSync1 + cycleTimeSync0);
+/*ECATCHANGE_END(V5.12) ECAT4*/
+
         /* get the number of Sync0 event within on SM cycle */
-        if(cycleTimeSync1 >= cycleTimeSync0)
+        if(shiftTimeSync1 >= cycleTimeSync0)
         {
+
             u16SmSync0Value = (UINT16)(cycleTimeSync1 / cycleTimeSync0);
             
             if((cycleTimeSync1 % cycleTimeSync0) == 0)
             {
                 /* if the Sync1cycletime/Sync0cycletime ratio is even one additional tick */
                 u16SmSync0Value ++;
-        }
+            }
         }
         else
         {
@@ -1010,8 +1050,10 @@ UINT16 StartInputHandler(void)
         /* Calculate the Sync0 tick on which the inputs shall be latched (last Sync0 before the next Sync1 event)*/
         LatchInputSync0Value = (UINT16) (cycleTimeSync1 / cycleTimeSync0);
 
-        if((cycleTimeSync1 % cycleTimeSync0) > 0)
+        if ((cycleTimeSync1 % cycleTimeSync0) > 0)
+        {
             LatchInputSync0Value++;
+        }
 
     }
     else 
@@ -1039,10 +1081,8 @@ UINT16 StartInputHandler(void)
     */
 
     /*get the watchdog time (register 0x420). if value is > 0 watchdog is active*/
-/*ECATCHANGE_START(V5.11) ECAT4*/
     HW_EscReadWord(wd, ESC_PD_WD_TIME);
     wd = SWAPWORD(wd);
-/*ECATCHANGE_END(V5.11) ECAT4*/
 
     if (nPdOutputSize > 0 &&  wd != 0 )
     {
@@ -1053,6 +1093,7 @@ UINT16 StartInputHandler(void)
         {
             /* the ESC subtracts 2 in register 0x400 so it has to be added here */
             UINT32 d = wdiv+2;
+
 
             d *= wd;
             /* store watchdog in ms in variable u16WdValue */
@@ -1097,11 +1138,17 @@ UINT16 StartInputHandler(void)
     bDcRunning = FALSE;
     bSmSyncSequenceValid = FALSE;
     i16WaitForPllRunningTimeout = 0;
-/*ECATCHANGE_START(V5.11) ECAT4*/
+
+/*ECATCHANGE_START(V5.12) ECAT5*/
+    sSyncManInPar.u16SmEventMissedCounter = 0;
+    sSyncManInPar.u16CycleExceededCounter = 0;
     sSyncManInPar.u8SyncError = 0;
-/*ECATCHANGE_END(V5.11) ECAT4*/
-    sSyncManOutPar.u8SyncError = 0;
+
+
     sSyncManOutPar.u16SmEventMissedCounter = 0;
+    sSyncManOutPar.u16CycleExceededCounter = 0;
+    sSyncManOutPar.u8SyncError = 0;
+/*ECATCHANGE_END(V5.12) ECAT5*/
 
     /* calculate the Sync0/Sync1 watchdog timeouts */
     if ( (dcControl & ESC_DC_SYNC0_ACTIVE_MASK) != 0 )
@@ -1115,6 +1162,7 @@ UINT16 StartInputHandler(void)
         else
         {
             UINT32 Sync0Cycle = cycleTimeSync0/100000;
+
             if(Sync0Cycle < 5)
             {
                 /*Sync0 cycle less than 500us*/
@@ -1129,23 +1177,27 @@ UINT16 StartInputHandler(void)
         /* Calculate also the watchdog time for Sync1*/
         if ( (dcControl & ESC_DC_SYNC1_ACTIVE_MASK) != 0 )
         {
-            if(cycleTimeSync1 < cycleTimeSync0)
+            if(shiftTimeSync1 < cycleTimeSync0)
         {
-                /* Sync 1 has the same cycle time than Sync0 (maybe with a shift (cycleTimeSync1 > 0))*/
+                /* Sync 1 has the same cycle time than Sync0 (maybe with a shift (shiftTimeSync1 > 0))*/
                 Sync1WdValue = Sync0WdValue;
         }
         else
         {
                 /* Sync1 cycle is larger than Sync0 (e.g. subordinated Sync0 cycles) */
-                UINT32 Sync1Cycle = cycleTimeSync1/100000;
+/*ECATCHANGE_START(V5.12) ECAT4*/
+                UINT32 Sync1Cycle = (shiftTimeSync1  + cycleTimeSync0 )/100000;
+/*ECATCHANGE_END(V5.12) ECAT4*/
                 if(Sync1Cycle < 5)
                 {
                     /*Sync0 cycle less than 500us*/
                     Sync1WdValue = 1;
-    }
-    else
-    {
-                    Sync1WdValue = (UINT16)(Sync1Cycle*2)/10;
+                }
+                else
+                {
+                    /*ECATCHANGE_START(V5.12)*/
+                    Sync1WdValue = (UINT16)((Sync1Cycle*2)/10);
+                    /*ECATCHANGE_END(V5.12)*/
                 }
 
                 /* add one Sync0 cycle because the Sync1 cycle starts on the next Sync0 after the Sync1 signal */
@@ -1154,22 +1206,14 @@ UINT16 StartInputHandler(void)
     }
     }
 
-
-
-
-
     if(nPdOutputSize > 0)
     {
-/*ECATCHANGE_START(V5.11) HW1*/
         EnableSyncManChannel(PROCESS_DATA_OUT);
-/*ECATCHANGE_END(V5.11) HW1*/
     }
 
     if(nPdInputSize > 0)
     {
-/*ECATCHANGE_START(V5.11) HW1*/
         EnableSyncManChannel(PROCESS_DATA_IN);
-/*ECATCHANGE_END(V5.11) HW1*/
     }
 
     /*write initial input data*/
@@ -1190,12 +1234,10 @@ UINT16 StartInputHandler(void)
 
 UINT16 StartOutputHandler(void)
 {
-/*ECATCHANGE_START(V5.11) ESM6*/
     /* by default the SO transition should be completed in AlControlRes().
        required to support also masters which starts to send process data after the SO transition was triggered
        (if the master don't send process data within "SAFEOP2OPTIMEOUT" the transition is rejected)*/
     UINT16 result = NOERROR_INWORK;
-/*ECATCHANGE_END(V5.11) ESM6*/
     if(bLocalErrorFlag)
     {
         /*Local error still exists => skip state request to OP and response with "u16LocalErrorCode"*/
@@ -1208,9 +1250,21 @@ UINT16 StartOutputHandler(void)
     if(bDcSyncActive)
     {
         i16WaitForPllRunningTimeout = 200;
+
         i16WaitForPllRunningCnt = 0;
     }
 
+
+/*ECATCHANGE_START(V5.12) ECAT5*/
+
+    sSyncManOutPar.u16SmEventMissedCounter = 0;
+    sSyncManOutPar.u8SyncError = 0;
+
+
+    sSyncManInPar.u16SmEventMissedCounter = 0;
+    sSyncManInPar.u8SyncError = 0;
+
+/*ECATCHANGE_END(V5.12) ECAT5*/
 
     return result;
 }
@@ -1241,17 +1295,13 @@ void StopInputHandler(void)
     if(nPdOutputSize > 0)
     {
         /* disable the Sync Manager Channel 2 (outputs) */
-/*ECATCHANGE_END(V5.11) HW1*/
         DisableSyncManChannel(PROCESS_DATA_OUT);
-/*ECATCHANGE_END(V5.11) HW1*/
     }
 
     if(nPdInputSize > 0)
     {
         /*disable Sync Manager 3 (inputs) if no outputs available*/
-/*ECATCHANGE_START(V5.11) HW1*/
         DisableSyncManChannel(PROCESS_DATA_IN);
-/*ECATCHANGE_END(V5.11) HW1*/
     }
 
     /* reset the events in the AL Event mask register (0x204) */
@@ -1260,9 +1310,7 @@ void StopInputHandler(void)
         ResetMask |= PROCESS_OUTPUT_EVENT;
         ResetMask |= PROCESS_INPUT_EVENT;
 
-/*ECATCHANGE_START(V5.11) HW1*/
     ResetALEventMask( ~(ResetMask) );
-/*ECATCHANGE_END(V5.11) HW1*/
     }
     /* reset the flags */
     bEcatFirstOutputsReceived = FALSE;
@@ -1281,9 +1329,18 @@ void StopInputHandler(void)
     Sync1WdValue = 0;
     LatchInputSync0Value = 0;
     LatchInputSync0Counter = 0;
-/*ECATCHANGE_START(V5.11) ECAT4*/
+
+    /*ECATCHANGE_START(V5.12) ECAT5*/
+
+    sSyncManOutPar.u16SmEventMissedCounter = 0;
+    sSyncManOutPar.u16CycleExceededCounter = 0;
+    sSyncManOutPar.u8SyncError = 0;
+
+
+    sSyncManInPar.u16SmEventMissedCounter = 0;
+    sSyncManInPar.u16CycleExceededCounter = 0;
     sSyncManInPar.u8SyncError = 0;
-/*ECATCHANGE_END(V5.11) ECAT4*/
+/*ECATCHANGE_END(V5.12) ECAT5*/
 
     i16WaitForPllRunningTimeout = 0;
 
@@ -1372,15 +1429,17 @@ void AL_ControlInd(UINT8 alControl, UINT16 alStatusCode)
         nAlStatus &= ~STATE_CHANGE;
         /*enable SM2 is moved to state transition block. First check SM Settings.*/
     }
-    else if ( (nAlStatus & STATE_CHANGE)
-    // HBu 17.04.08: the error has to be acknowledged before when sending the same (or a higher) state
-    //               (the error was acknowledged with the same state before independent of the acknowledge flag)
-    /*Error Acknowledge with 0xX1 is allowed*/
-           && (alControl & STATE_MASK) != STATE_INIT )
+    else if ((nAlStatus & STATE_CHANGE)
+        // HBu 17.04.08: the error has to be acknowledged before when sending the same (or a higher) state
+        //               (the error was acknowledged with the same state before independent of the acknowledge flag)
+        /*Error Acknowledge with 0xX1 is allowed*/
+        && (alControl & STATE_MASK) != STATE_INIT)
+    {
         /* the error flag (Bit 4) is set in the AL-Status and the ErrAck bit (Bit 4)
            is not set in the AL-Control, so the state cannot be set to a higher state
            and the new state request will be ignored */
         return;
+    }
     else
     {
         nAlStatus &= STATE_MASK;
@@ -1392,7 +1451,6 @@ void AL_ControlInd(UINT8 alControl, UINT16 alStatusCode)
     stateTrans = nAlStatus;
     stateTrans <<= 4;
     stateTrans += alControl;
-
 
     /* check the SYNCM settings depending on the state transition */
     switch ( stateTrans )
@@ -1415,8 +1473,10 @@ void AL_ControlInd(UINT8 alControl, UINT16 alStatusCode)
             the ErrorInd Bit (bit 4) of the AL-Status */
         result = APPL_GenerateMapping(&nPdInputSize,&nPdOutputSize);
 
-        if (result != 0)
-            break;
+            if (result != 0)
+            {
+                break;
+            }
         }
     case SAFEOP_2_OP:
     case OP_2_SAFEOP:
@@ -1427,6 +1487,7 @@ void AL_ControlInd(UINT8 alControl, UINT16 alStatusCode)
            switch to PREOP and set the ErrorInd Bit (bit 4) of the AL-Status */
         result = CheckSmSettings(nMaxSyncMan);
         break;
+
     }
 
     if ( result == 0 )
@@ -1437,12 +1498,17 @@ void AL_ControlInd(UINT8 alControl, UINT16 alStatusCode)
         {
         case INIT_2_BOOT    :
             result = ALSTATUSCODE_BOOTNOTSUPP;
+
+
+
             break;
 
         case BOOT_2_INIT    :
             result = ALSTATUSCODE_BOOTNOTSUPP;
 
             BackToInitTransition();
+
+
 
             break;
         case INIT_2_PREOP :
@@ -1478,8 +1544,10 @@ void AL_ControlInd(UINT8 alControl, UINT16 alStatusCode)
             if(result != 0 && result != NOERROR_INWORK)
             {
                 /*Stop APPL Mbx handler if APPL Start Mbx handler was called before*/
-                if(!bApplEsmPending)
-                    APPL_StopMailboxHandler();
+                    if (!bApplEsmPending)
+                    {
+                        APPL_StopMailboxHandler();
+                    }
 
                  MBX_StopMailboxHandler();
             }
@@ -1498,9 +1566,7 @@ void AL_ControlInd(UINT8 alControl, UINT16 alStatusCode)
                 if(result == 0)
                 {
                     /* initialize the AL Event Mask register (0x204) */
-/*ECATCHANGE_START(V5.11) HW1*/
                     SetALEventMask( u16ALEventMask );
-/*ECATCHANGE_END(V5.11) HW1*/
 
                     bEcatInputUpdateRunning = TRUE;
                 }
@@ -1538,8 +1604,10 @@ void AL_ControlInd(UINT8 alControl, UINT16 alStatusCode)
 
             if ( result != 0 && result != NOERROR_INWORK)
             {
-                if(!bApplEsmPending)
-                    APPL_StopOutputHandler();
+                    if (!bApplEsmPending)
+                    {
+                        APPL_StopOutputHandler();
+                    }
 
                 StopOutputHandler();
             }
@@ -1565,7 +1633,9 @@ void AL_ControlInd(UINT8 alControl, UINT16 alStatusCode)
             bApplEsmPending = FALSE;
 
             if (result != 0)
+            {
                 break;
+            }
 
             stateTrans = SAFEOP_2_PREOP;
 
@@ -1588,7 +1658,9 @@ void AL_ControlInd(UINT8 alControl, UINT16 alStatusCode)
             bApplEsmPending = FALSE;
 
             if (result != 0)
+            {
                 break;
+            }
             
             stateTrans = SAFEOP_2_INIT;
 
@@ -1601,7 +1673,9 @@ void AL_ControlInd(UINT8 alControl, UINT16 alStatusCode)
             bApplEsmPending = FALSE;
 
             if (result != 0)
+            {
                 break;
+            }
             stateTrans = PREOP_2_INIT;
 
         case PREOP_2_INIT:
@@ -1617,28 +1691,27 @@ void AL_ControlInd(UINT8 alControl, UINT16 alStatusCode)
         case SAFEOP_2_SAFEOP:
         case OP_2_OP:
             if(bErrAck)
-                APPL_AckErrorInd(stateTrans);
-
-            if(!bLocalErrorFlag)
             {
+                APPL_AckErrorInd(stateTrans);
+            }
+
+/*ECATCHANGE_START(V5.12) ESM2*/
+
                 /*no local error flag is currently active, enable SM*/
                 if ( nAlStatus & (STATE_SAFEOP | STATE_OP))
                 {
                     if(nPdOutputSize > 0)
                     {
-/*ECATCHANGE_START(V5.11) HW1*/
                         EnableSyncManChannel(PROCESS_DATA_OUT);
-/*ECATCHANGE_END(V5.11) HW1*/
                     }
                     else 
                     if(nPdInputSize > 0)
                     {
-/*ECATCHANGE_START(V5.11) HW1*/
                         EnableSyncManChannel(PROCESS_DATA_IN);
-/*ECATCHANGE_END(V5.11) HW1*/
                     }
                 }
-            }
+/*ECATCHANGE_END(V5.12) ESM2*/
+            
             result = NOERROR_NOSTATECHANGE;
             break;
 
@@ -1674,19 +1747,25 @@ void AL_ControlInd(UINT8 alControl, UINT16 alStatusCode)
             APPL_StopInputHandler();
 
             StopInputHandler();
-
         case STATE_PREOP:
-
             if ( result == ALSTATUSCODE_INVALIDMBXCFGINPREOP )
             {
                 /* the mailbox sync manager settings were wrong, switch back to INIT */
                 MBX_StopMailboxHandler();
                 APPL_StopMailboxHandler();
 
+                /*Disable SM0 (MBX Out)*/
+                DisableSyncManChannel(MAILBOX_WRITE);
+
+                /*Disable SM1 (MBX In)*/
+                DisableSyncManChannel(MAILBOX_READ);
+
                 nAlStatus = STATE_INIT;
             }
             else
+            {
                 nAlStatus = STATE_PREOP;
+            }
         }
     }
 
@@ -1713,7 +1792,9 @@ void AL_ControlInd(UINT8 alControl, UINT16 alStatusCode)
                 EsmTimeoutCounter = 200; //Set default timeout value to 200ms
                 break;
         }
-        EsmTimeoutCounter -= 50; //subtract 50ms from the timeout to react before the master runs into a timeout.
+        /*ECATCHANGE_START(V5.12) ESM3*/
+        EsmTimeoutCounter -= (INT16) (EsmTimeoutCounter / 10); //subtract 10% from the timeout to react before the master runs into a timeout.
+        /*ECATCHANGE_END(V5.12) ESM3*/
 
     }
     else if ( alControl != (nAlStatus & STATE_MASK) )
@@ -1736,24 +1817,22 @@ void AL_ControlInd(UINT8 alControl, UINT16 alStatusCode)
             if(nPdOutputSize > 0)
             {
                 /* disable the Sync Manager Channel 2 (outputs) */
-/*ECATCHANGE_START(V5.11) HW1*/
                 DisableSyncManChannel(PROCESS_DATA_OUT);
-/*ECATCHANGE_END(V5.11) HW1*/
             }
             else
                 if(nPdInputSize > 0)
             {
                 /*disable Sync Manager 3 (inputs) if no outputs available*/
-/*ECATCHANGE_START(V5.11) HW1*/
                 DisableSyncManChannel(PROCESS_DATA_IN);
-/*ECATCHANGE_END(V5.11) HW1*/
             }
 
         }
         if ( result != 0 )
         {
-            if ( nAlStatus == STATE_OP )
-                nAlStatus = STATE_SAFEOP;
+                if (nAlStatus == STATE_OP)
+                {
+                    nAlStatus = STATE_SAFEOP;
+                }
             /* save the failed status to be able to decide, if the AL Status Code shall be
                reset in case of a coming successful state transition */
             nAlStatus |= STATE_CHANGE;
@@ -1814,8 +1893,10 @@ void AL_ControlRes(void)
                 case INIT_2_PREOP:
                 case INIT_2_BOOT:
 
-                    if(!bApplEsmPending)
-                        APPL_StopMailboxHandler();
+                        if (!bApplEsmPending)
+                        {
+                            APPL_StopMailboxHandler();
+                        }
 
                     MBX_StopMailboxHandler();
                     if(bLocalErrorFlag)
@@ -1830,8 +1911,11 @@ void AL_ControlRes(void)
                     }
                 break;
                 case PREOP_2_SAFEOP:
-                    if(!bApplEsmPending)
-                        APPL_StopInputHandler();
+
+                        if (!bApplEsmPending)
+                        {
+                            APPL_StopInputHandler();
+                        }
 
                     StopInputHandler();
                     
@@ -1855,9 +1939,7 @@ void AL_ControlRes(void)
                             /*no Sync0 signal received*/
                             StatusCode = ALSTATUSCODE_NOSYNCERROR;
                         }
-/*ECATCHANGE_START(V5.11) ECAT4*/
                         else if(!bEcatFirstOutputsReceived && (nPdOutputSize > 0))
-/*ECATCHANGE_END(V5.11) ECAT4*/
                         {
                             /*no process data received*/
                             StatusCode = ALSTATUSCODE_SMWATCHDOG;
@@ -1870,13 +1952,11 @@ void AL_ControlRes(void)
                     }
                     else
                     {
-/*ECATCHANGE_START(V5.11) ECAT4*/
                         if (nPdOutputSize > 0)
                         {
                             StatusCode = ALSTATUSCODE_SMWATCHDOG;
                         }
                         else
-/*ECATCHANGE_END(V5.11) ECAT4*/
                         {
                             /*Set valid state transition even if timeout expired*/
                             Status = STATE_OP;
@@ -1889,8 +1969,10 @@ void AL_ControlRes(void)
                     /*Stop handler on failed transition*/
                     if(StatusCode != 0)
                     {
-                        if(!bApplEsmPending)
-                            APPL_StopOutputHandler();
+                            if (!bApplEsmPending)
+                            {
+                                APPL_StopOutputHandler();
+                            }
 
                         StopOutputHandler();
                     }
@@ -1966,6 +2048,9 @@ void AL_ControlRes(void)
                                 i16WaitForPllRunningTimeout = 0;
                                 i16WaitForPllRunningCnt = 0;
 
+/*ECATCHANGE_START(V5.12) ESM4*/
+                                bApplEsmPending = FALSE;
+/*ECATCHANGE_END(V5.12) ESM4*/
                                 result = APPL_StartOutputHandler();
 
                                 if(result == 0)
@@ -1988,6 +2073,9 @@ void AL_ControlRes(void)
                         {
                             if(nPdOutputSize == 0 || bEcatFirstOutputsReceived)
                             {
+/*ECATCHANGE_START(V5.12) ESM4*/
+                                bApplEsmPending = FALSE;  
+/*ECATCHANGE_END(V5.12) ESM4*/
                                 result = APPL_StartOutputHandler();
 
                                 if(result == 0)
@@ -2036,9 +2124,12 @@ void AL_ControlRes(void)
 *////////////////////////////////////////////////////////////////////////////////////////
 void DC_CheckWatchdog(void)
 {
-    if(bDcSyncActive)
+/*ECATCHANGE_START(V5.12) ECAT5*/
+    DISABLE_ESC_INT();
+/*ECATCHANGE_END(V5.12) ECAT5*/
+
+    if(bDcSyncActive && bEcatInputUpdateRunning)
     {
-/*ECATCHANGE_START(V5.11) ESM4*/
         /*If Sync0 watchdog is enabled and expired*/
         if((Sync0WdValue > 0) && (Sync0WdCounter >= Sync0WdValue))
         {
@@ -2071,29 +2162,24 @@ void DC_CheckWatchdog(void)
                 }
             }
         }
-/*ECATCHANGE_END(V5.11) ESM4*/
-
         if(bDcRunning)
         {
-/*ECATCHANGE_START(V5.11) COE3*/
            if(sSyncManOutPar.u16SmEventMissedCounter < sErrorSettings.u16SyncErrorCounterLimit)
-/*ECATCHANGE_END(V5.11) COE3*/
             {
                 bSmSyncSequenceValid = TRUE;
 
                 /*Wait for PLL is active increment the Pll valid counter*/
-                if(i16WaitForPllRunningTimeout > 0)
+                if (i16WaitForPllRunningTimeout > 0)
                 {
                     i16WaitForPllRunningCnt++;
                 }
             }
-            else if(bSmSyncSequenceValid)
+            else if (bSmSyncSequenceValid)
             {
-                bSmSyncSequenceValid = FALSE;
-                sSyncManOutPar.u8SyncError = 1;
+                    bSmSyncSequenceValid = FALSE;
 
                 /*Wait for PLL is active reset the Pll valid counter*/
-                if(i16WaitForPllRunningTimeout > 0)
+                if (i16WaitForPllRunningTimeout > 0)
                 {
                     i16WaitForPllRunningCnt = 0;
                 }
@@ -2101,10 +2187,12 @@ void DC_CheckWatchdog(void)
         }
         else if(bSmSyncSequenceValid)
         {
-            bSmSyncSequenceValid = FALSE;
+           bSmSyncSequenceValid = FALSE;
         }
-
     }
+    /*ECATCHANGE_START(V5.12) ECAT5*/
+    ENABLE_ESC_INT();
+    /*ECATCHANGE_END(V5.12) ECAT5*/
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -2125,7 +2213,6 @@ void CheckIfEcatError(void)
       HW_EscReadWord(WdStatusOK, ESC_PD_WD_STATE);
       WdStatusOK = SWAPWORD(WdStatusOK);
 
-      /*ECATCHANGE_START(V5.11) ECAT4*/
       if (!(WdStatusOK & ESC_PD_WD_TRIGGER_MASK) && (nPdOutputSize > 0))
       {
          /*The device is in OP state*/
@@ -2142,7 +2229,6 @@ void CheckIfEcatError(void)
             bEcatFirstOutputsReceived = FALSE;
          }
       }
-      /*ECATCHANGE_END(V5.11) ECAT4*/
    }
 
    if(bDcSyncActive)
@@ -2177,6 +2263,7 @@ void ECAT_StateChange(UINT8 alStatus, UINT16 alStatusCode)
 {
     UINT8 Status = alStatus;
 
+
     if(bEcatWaitForAlControlRes)
     {
         /*State transition is pending*/
@@ -2206,6 +2293,7 @@ void ECAT_StateChange(UINT8 alStatus, UINT16 alStatusCode)
                 {
                     case INIT_2_PREOP:
                     case INIT_2_BOOT:
+                     
                           APPL_StopMailboxHandler();
                           MBX_StopMailboxHandler();
                     break;
@@ -2233,6 +2321,10 @@ void ECAT_StateChange(UINT8 alStatus, UINT16 alStatusCode)
                         bMbxRunning = TRUE;
                     break;
                     case PREOP_2_SAFEOP:
+/*ECATCHANGE_START(V5.12) ESM4*/
+                        /* initialize the AL Event Mask register (0x204) */
+                        SetALEventMask(u16ALEventMask);
+/*ECATCHANGE_END(V5.12) ESM4*/
                         bEcatInputUpdateRunning = TRUE;
                     break;
                     case SAFEOP_2_OP:
@@ -2246,8 +2338,10 @@ void ECAT_StateChange(UINT8 alStatus, UINT16 alStatusCode)
                 /*Pending state transition finished => write AL Status and AL Status Code*/
                 bEcatWaitForAlControlRes = FALSE;
 
-                if(alStatusCode != 0)
+                if (alStatusCode != 0)
+                {
                     Status |= STATE_CHANGE;
+                }
 
                 SetALStatus(Status,alStatusCode);
 
@@ -2257,38 +2351,22 @@ void ECAT_StateChange(UINT8 alStatus, UINT16 alStatusCode)
     {
         if ( alStatusCode != 0 )
         {
-            /* Local error has happened, we change the state if necessary */
             bLocalErrorFlag = TRUE;
             u16LocalErrorCode = alStatusCode;
-    
-            if ( (alStatus & STATE_MASK) < (nAlStatus & STATE_MASK) )
+
+/*ECATCHANGE_START(V5.12) ESM1*/    
+            if (((nAlStatus & STATE_CHANGE) != STATE_CHANGE) || ((alStatus & STATE_MASK) < (nAlStatus & STATE_MASK)))
             {
+                /* Local error has happened, we change the state if necessary */
+
+               /* no error pending and the target state is lower than the current one*/
                 AL_ControlInd(alStatus, alStatusCode);
             }
+/*ECATCHANGE_END(V5.12) ESM1*/    
         }
         else if (bLocalErrorFlag)
         {
-            /*a local error is gone */
-            if ( (nAlStatus & STATE_MASK) == (STATE_SAFEOP | STATE_OP) )
-            {
-                if(nPdOutputSize > 0)
-                {
-                    /* we have to enable the output process data SyncManger (default: SM2),
-                    because it was disabled when switching back to SAFE-OP */
-/*ECATCHANGE_START(V5.11) HW1*/
-                    EnableSyncManChannel(PROCESS_DATA_OUT);
-/*ECATCHANGE_END(V5.11) HW1*/
-                }
-                else 
-                    if (nPdInputSize > 0)
-                {
-                    /* we have to enable the input process data SyncManger (default: SM3),
-                    because it was disabled when switching back to SAFE-OP */
-/*ECATCHANGE_START(V5.11) HW1*/
-                    EnableSyncManChannel(PROCESS_DATA_IN);
-/*ECATCHANGE_END(V5.11) HW1*/
-                }
-            }
+            /*a local error is gone*/
             bLocalErrorFlag = FALSE;
             u16LocalErrorCode = 0x00;
         }
@@ -2318,9 +2396,7 @@ void ECAT_Init(void)
     TmpVar = SWAPWORD(TmpVar);
 
     //get max address (register + DPRAM size in Byte (in the register it is stored in KB))
-    /* ECATCHANGE_START(V5.11) ESC1*/
     nMaxEscAddress = (UINT16) ((TmpVar & ESC_DPRAM_SIZE_MASK) << 10) + 0xFFF;
-    /* ECATCHANGE_END(V5.11) ESC1*/
     }
 
     /* Get EEPROM loaded information */
@@ -2329,9 +2405,7 @@ void ECAT_Init(void)
     /* disable all Sync Manager channels */
     for (i = 0; i < nMaxSyncMan; i++)
     {
-/*ECATCHANGE_START(V5.11) HW1*/
         DisableSyncManChannel(i);
-/*ECATCHANGE_END(V5.11) HW1*/
     }
 
     /* initialize the mailbox handler */
@@ -2362,12 +2436,13 @@ void ECAT_Init(void)
     SetALStatus(nAlStatus, 0);
     nEcatStateTrans = 0;
 
-/* ECATCHANGE_START(V5.11) ECAT5*/
     bEscIntEnabled = FALSE;
-/* ECATCHANGE_END(V5.11) ECAT5*/
 
     /* initialize the COE part */
     COE_Init();
+
+    /*reset AL event mask*/
+    ResetALEventMask(0);
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -2380,6 +2455,7 @@ void ECAT_Main(void)
     UINT16 ALEventReg;
     UINT16 EscAlControl = 0x0000;
     UINT16 sm1Activate = SM_SETTING_ENABLE_VALUE;
+
 
     /* check if services are stored in the mailbox */
     MBX_Main();
@@ -2439,8 +2515,10 @@ void ECAT_Main(void)
     {
         /*SnycManger change event (0x220:4) could be acknowledged by reading the SM1 control register without notification to the local application
         => check if the SyncManger 1 is still enabled*/
-        if(!(sm1Activate & SM_SETTING_ENABLE_VALUE))
-            AL_ControlInd(nAlStatus & STATE_MASK, 0);
+            if (!(sm1Activate & SM_SETTING_ENABLE_VALUE))
+            {
+                AL_ControlInd(nAlStatus & STATE_MASK, 0);
+            }
 
         if ( ALEventReg & (MAILBOX_READ_EVENT) )
         {
@@ -2456,7 +2534,6 @@ void ECAT_Main(void)
             MBX_MailboxReadInd();
         }
 
-        DISABLE_MBX_INT;
         /* bMbxRepeatToggle holds the last state of the Repeat Bit (Bit 1) */
 
         if ( ( (sm1Activate & SM_SETTING_REPAET_REQ_MASK) && !bMbxRepeatToggle )
@@ -2467,15 +2544,18 @@ void ECAT_Main(void)
             MBX_MailboxRepeatReq();
             /* acknowledge the repeat request after the send mailbox was updated by writing the Repeat Bit
                in the Repeat Ack Bit (Bit 1) of the PDI Ctrl-Byte of SM 1 (Register 0x80F) */
-            if(bMbxRepeatToggle)
+            if (bMbxRepeatToggle)
+            {
                 sm1Activate |= SM_SETTING_REPEAT_ACK; //set repeat acknowledge bit (bit 9)
+            }
             else
+            {
                 sm1Activate &= ~SM_SETTING_REPEAT_ACK; //clear repeat acknowledge bit (bit 9)
+            }
 
             sm1Activate = SWAPWORD(sm1Activate);
             HW_EscWriteWord(sm1Activate,(ESC_SYNCMAN_ACTIVE_OFFSET + SIZEOF_SM_REGISTER));
         }
-        ENABLE_MBX_INT;
 
         /* Reload the AlEvent because it may be changed due to a SM disable, enable in case of an repeat request */
         ALEventReg = HW_GetALEventRegister();

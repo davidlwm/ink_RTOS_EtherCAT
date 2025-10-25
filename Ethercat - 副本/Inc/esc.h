@@ -1,3 +1,8 @@
+/*
+* This source file is part of the EtherCAT Slave Stack Code licensed by Beckhoff Automation GmbH & Co KG, 33415 Verl, Germany.
+* The corresponding license agreement applies. This hint shall not be removed.
+*/
+
 /**
  * \addtogroup ESCRegister  ESC Register
  * @{
@@ -17,17 +22,16 @@ V5.10 ESC3: Handle DC cControl register values in case of 32Bit ESC access (a Sy
 <br>Changes to version - :<br>
 V5.01 : Start file change log
  */
-#ifndef _ESC_H_
-#define _ESC_H_
 
 /*-----------------------------------------------------------------------------------------
 ------
 ------    Includes
 ------
 -----------------------------------------------------------------------------------------*/
-
 #include "ecat_def.h"
 
+#ifndef _ESC_H_
+#define _ESC_H_
 
 /*-----------------------------------------------------------------------------------------
 ------
@@ -52,6 +56,9 @@ V5.01 : Start file change log
 #define ESC_SM_CHANNELS_SHIFT                   8                                   /**< \brief Bit shift based on ESC offset "ESC_COMM_INFO_OFFSET"*/
 #define ESC_DPRAM_SIZE_MASK                     0x00FF
 
+#define ESC_FEATURES_OFFSET                     0x0008                              /**< \brief Register indicating ESC features*/
+#define ESC_DC_32BIT_MASK                       0x00000008                          /**< \brief register 0x0008.3 indicates if the DC Unit supports 32Bit/64Bit DC*/
+
 
 #define ESC_SLAVE_ADDRESS_OFFSET                0x0010                              /**< \brief Register Description: Address used for node addressing (FPxx commands)*/
 
@@ -65,6 +72,7 @@ V5.01 : Start file change log
 #define ESC_ERROR_LED_OVERRIDE                  0x0139                              /**< \brief Register Description: Set Ecat Error indication via ESC. (not all ESC types support this feature)*/
 
 #define ESC_PDI_CONTROL_OFFSET                  0x0140                              /**< \brief Register Description: Specifies the process data interface*/
+#define ESC_DEVICE_EMULATION                    0x0100                              /**< \brief Device emulation bit*/
 
 #define ESC_AL_EVENTMASK_OFFSET                 0x0204                              /**< \brief Register Description: AL Event masking of the AL Event Request register Events for mapping to PDI IRQ signal*/
 #define ESC_AL_EVENT_OFFSET                     0x0220                              /**< \brief Register Description: "Mirror" register for ESC events*/
